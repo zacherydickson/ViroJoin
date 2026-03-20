@@ -42,3 +42,7 @@ Version 0.2.7
 	Removed arbitrary limit on read length when extracting clips
 Version 1.0.0
 	Renaming Program to ViroJoin
+Version 1.0.0+keep
+	Change to default behaviour where ViroJoin now removes all intermediary files
+        Added --keep option to prevent this behaviour
+        Update to README to indicate behaviour and results files
