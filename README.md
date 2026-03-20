@@ -98,12 +98,22 @@ The parameters are provided as a comma separated list of 4 values:
 - The upper standard deviation from mean insert size ( std.dev calculated only for insert sizes larger than the
   mean )
 
+By default ViroJoin will not rerun steps in its analysis if the required files are already present, if you would like to force rerunning of all steps, you can use the `--clean_first` option.
+
+ViroJoin generates many intermediate files, by default these will be cleaned up after a run. If you wish to retain these files for further exploration, you may use the `--keep` option. If at a later time you no longer wish to retain those files, they can be cleaned up by re-running ViroJoin without the `--keep` option. For a completed run, this will only clean up the intermediate files (unless `--clean_first`) is specified.
+
 Other options are provided for fine tuning of the insert sizes, clip sizes, allowed alternative alignments.
 Use `surveyor --help` for more information.
 
 ## Output
 
-The final output will be placed in the workdir, under the name results.remapped.t1.txt.
+The final output will be placed in the workdir, the results are:
+- `results.remapped.t1.txt` - Identifies the positions of the junctions, more information below
+- `host_bp_seqs.fa` - contains the sequences of the host side of the junctions
+- `host_bp_seqs.fa` - contains the sequences of the viral side of the junctions
+- `readsx/ID.bam` - contains the reads which support the identified junctions
+
+Please note that the `results.remapped.t1.txt` contains the final set of identified junctions, the other results may have information for junctions which were eventually filtered out. Match up the IDs in the results files.
 
 The following line is an example of a predicted integration:
 ```
