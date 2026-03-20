@@ -83,9 +83,15 @@ cmd_parser.add_argument('--maxAltAln', type=int, default=6,
 cmd_parser.add_argument('--maxSCDist', type=int, default=10,
                         help='Max SC distance.')
 cmd_parser.add_argument('--clean_first', action='store_true',
-                        help=   'Before processing any files already in the'
+                        help=   'Before processing, any files already in the'
                                 ' working directory are erased - By default'
                                 ' ViroJoin will only perform incomplete steps')
+cmd_parser.add_argument('--keep', action='store_true',
+                        help=   'Retain intermediate files - By default'
+                                ' ViroJoin will only keep final junction info,'
+                                ' sequences, and reads. Note: a non-keep run'
+                                ' on the same working dir as a past keep run'
+                                ' will cleanup intermediary files of that past run')
 cmd_parser.add_argument('--isParams',
                         help=   '4 comma spearated values defining the read length'
                                 ' as well mean, std.dev, and upper std.dev'
@@ -130,6 +136,18 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "vSeq"      : "virus_bp_seqs.fa"
     }.items()
 }
+
+CLEANUP_PATH_LIST = [ PATH_DICT[key] for key in [
+        "adjRes", "ctgLen", "ctgMap", "edges", "discard", "frawRes", "hBed",
+        "jBed", "juncCand", "regSeq", "regCand", "rrMap", "readSeq", "rawRes",
+        "vBed","vNames"
+    ]
+]
+CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
+        "bam_0", "head.sam", "head_1.fq", "head_2.fq",
+        "host_bp_seqs.masked.bed", "virus_bp_seqs.masked.bed"
+    ]
+]
 
 BIN_DICT = { nm : os.path.join(SURVIRUS_BIN_PATH,nm) for nm in (
         "cleanbam", "addX2tag", "enumerate_edges",
@@ -514,5 +532,25 @@ filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected >"
                 f" {PATH_DICT['discard']}" )
 if missing_file(PATH_DICT['discard']):
     execute(filter_cmd)
+
+if not cmd_args.keep:
+    eprint("Cleaning up intermediary files ...")
+    while CLEANUP_PATH_LIST:
+        path = CLEANUP_PATH_LIST.pop()
+        #Check if the path is a link. We do this first to prevent possible circularity
+        # and to prevent undesired deletion of linked data
+        if os.path.islink(path): 
+            os.unlink(path)
+        elif os.path.isdir(path): #Check if directory
+            dir = os.listdir(path) #Check for files in the folder
+            if len(dir) == 0: #If not, go ahead and remove it
+                os.rmdir(path)
+            else: #Otherwise put it back, and add all of its children to be processed first
+                CLEANUP_PATH_LIST.append(path)
+                for child in dir:
+                    CLEANUP_PATH_LIST.append(os.path.join(path,child))
+        elif os.path.isfile(path): #its a file, just delete it
+            os.remove(path)
+        
 
 eprint("Done")
