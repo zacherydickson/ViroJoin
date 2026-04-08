@@ -46,3 +46,5 @@ Version 1.1.0
 	Change to default behaviour where ViroJoin now removes all intermediary files
         Added --keep option to prevent this behaviour
         Update to README to indicate behaviour and results files
+Version 1.1.0+prevalentClusters
+	Changed Clustering behaviour to cluster based on density rather than peaks

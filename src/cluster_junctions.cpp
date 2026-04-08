@@ -68,10 +68,13 @@ typedef std::unordered_set< jRegLabel_t, jRegLabel_HashFunctor,
 typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
 			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
 	    BestJRegSetMap_t;
+typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
+			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
+	    MututalJRegSetMap_t;
 
 //==== GLOBAL VARIABLE DECLARATIONS
 
-static int MinimumReads = 4;
+static size_t MinimumReads = 4;
 static int SplitBonus = 1;
 int MaxInsertSize;
 int ReadLength;
@@ -80,12 +83,15 @@ std::unordered_set<std::string> VirusNameSet;
 //==== FUNCTION DECLARATIONS
 
 void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
-		    jRegLabelVector_t & labelVec);
-void IdentifyBestJunctions( const std::string fname,BestJRegSetMap_t & bestSetMap);
-void ClusterRegions(const std::string fname, const BestJRegSetMap_t & bestSetMap,
-		    jRegMap_t & regionMap);
+		    jRegLabelVector_t & labelVec,
+                    MututalJRegSetMap_t & mutualJRegSetMap);
+void IdentifyBestJunctions( const std::string fname,
+                            BestJRegSetMap_t & bestSetMap);
+void ClusterRegions(const std::string fname, 
+                    const BestJRegSetMap_t & bestSetMap, jRegMap_t & regionMap);
 void FilterRegions(jRegMap_t & regionMap);
-void OutputRegions(std::string regfname, std::string readfname, const jRegMap_t & regionMap);
+void OutputRegions( std::string regfname, std::string readfname,
+                    const jRegMap_t & regionMap);
 
 //==== MAIN
 
@@ -137,7 +143,8 @@ int main(int argc, char* argv[]) {
 //Output - None, modifies the label count map and vector and split status map
 void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
 		    jRegLabelVector_t & labelVec,
-		    jRegSplitStatus_t & labelFromSplitOnly)
+		    jRegSplitStatus_t & labelFromSplitOnly,
+                    MututalJRegSetMap_t & mutualJRegSetMap)
 {
     fprintf(stderr,"Ordering Junctions ...\n");
     std::ifstream in(fname);
@@ -156,12 +163,44 @@ void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
 	labelCount[label]++;
 	if(!bSplit) labelFromSplitOnly[label] = false;
     }
+    //Pass over the regions again and determine how many mutually nearby junctions there are
+    //Track how many other labels are mutually in range of a given label
+    jRegLabelCount_t mutualLabelCount;
+    double perc = 0;
+    size_t i = 0;
+    for(const auto & pair : labelCount){
+	const jRegLabel_t & aLabel = pair.first;
+        mutualLabelCount[aLabel] = 0;
+        mutualJRegSetMap[aLabel] = jRegLabelSet_t();
+        bool bSplit = labelFromSplitOnly[aLabel];
+        size_t aRange = (bSplit) ? ReadLength : MaxInsertSize;
+	size_t left = (aLabel.pos > aRange) ? aLabel.pos - aRange : 0;
+	size_t right = aLabel.pos + aRange;
+        for(size_t pos = left; pos <= right; pos++){
+            jRegLabel_t bLabel = {aLabel.chr, aLabel.strand, pos};
+	    //Check if the potential junction exists
+	    if(!labelCount.count(bLabel)) continue;
+            //Make sure the other junction is mutually in range
+	    size_t bRange = (labelFromSplitOnly[bLabel]) ?  ReadLength : 
+	    						    MaxInsertSize;
+	    size_t dist = (pos < aLabel.pos) ?  aLabel.pos - pos :
+	    				    pos - aLabel.pos;	
+	    if(dist > bRange) continue;
+            mutualLabelCount[aLabel] += labelCount[bLabel];
+            mutualJRegSetMap[aLabel].insert(bLabel);
+        }
+        i++;
+        while( (i * 100.0) / double(labelVec.size()) > perc){
+	        perc += 1;
+	        fprintf(stderr,"Progress %lu of %lu (~%0.0f%%)\r",i,labelVec.size(),perc);
+	    }
+    }
     //Sort the vector of labels in descending order by count
     //sort's comparator is true if less (i.e earlier in sorted order),
     //	so we must return true if greater
     std::sort(	labelVec.begin(),labelVec.end(),
-		[&labelCount](jRegLabel_t & a, jRegLabel_t & b){
-		    return (labelCount[a] > labelCount[b]);
+		[&labelCount,&mutualLabelCount](jRegLabel_t & a, jRegLabel_t & b){
+		    return (labelCount[a] + mutualLabelCount[a] > labelCount[b] + mutualLabelCount[b]);
 		});
 
     fprintf(stderr,"Ordered %lu unique Junctions\n",labelVec.size());
@@ -179,7 +218,9 @@ void IdentifyBestJunctions( const std::string fname,
     jRegLabelVector_t labelVec;
     jRegLabelCount_t labelCount;
     jRegSplitStatus_t labelFromSplitOnly;
-    OrderJunctions(fname,labelCount,labelVec,labelFromSplitOnly);
+    MututalJRegSetMap_t mutualJRegSetMap;
+    OrderJunctions( fname,labelCount,labelVec,labelFromSplitOnly,
+                    mutualJRegSetMap);
 
     //Iterate over junctions from most prevalent to least
     double perc = 0;
@@ -188,23 +229,8 @@ void IdentifyBestJunctions( const std::string fname,
         //Iterate over all junctions with the same score as this one
 	do {
 	    jRegLabel_t & aLabel = labelVec[i];
-	    size_t aRange = (labelFromSplitOnly[aLabel]) ?	ReadLength : 
-								MaxInsertSize;
-	    size_t left = (aLabel.pos > aRange) ? aLabel.pos - aRange : 0;
-	    size_t right = aLabel.pos + aRange;
-            //Iterate over all junctions in range of this junction
-	    for(size_t pos = left; pos <= right; pos++){
-		jRegLabel_t bLabel = {aLabel.chr, aLabel.strand, pos};
-		//Check if the potential junction exists
-		if(!labelCount.count(bLabel)) continue;
-		//Make sure the other junction is mutually in range
-		size_t bRange = (labelFromSplitOnly[bLabel]) ?	ReadLength : 
-								MaxInsertSize;
-		size_t dist = (pos < aLabel.pos) ?  aLabel.pos - pos :
-						    pos - aLabel.pos;	
-		if(dist > bRange) continue;
-		//Check if the bLabel has already been assigned
-		if(!bestSetMap.count(bLabel)){
+            for(const jRegLabel_t & bLabel : mutualJRegSetMap[aLabel]){
+                if(!bestSetMap.count(bLabel)){
 		    bestSetMap[bLabel] = jRegLabelSet_t();
 		    bestSetMap[bLabel].insert(aLabel);
 		} else if(bestSetMap[bLabel].count(labelVec.at(first))){
@@ -212,7 +238,32 @@ void IdentifyBestJunctions( const std::string fname,
 		    //score as aLabel
 		    bestSetMap[bLabel].insert(aLabel);
 		}
-	    }
+            }
+	    //size_t aRange = (labelFromSplitOnly[aLabel]) ?	ReadLength : 
+	    //    						MaxInsertSize;
+	    //size_t left = (aLabel.pos > aRange) ? aLabel.pos - aRange : 0;
+	    //size_t right = aLabel.pos + aRange;
+            ////Iterate over all junctions in range of this junction
+	    //for(size_t pos = left; pos <= right; pos++){
+	    //    jRegLabel_t bLabel = {aLabel.chr, aLabel.strand, pos};
+	    //    //Check if the potential junction exists
+	    //    if(!labelCount.count(bLabel)) continue;
+	    //    //Make sure the other junction is mutually in range
+	    //    size_t bRange = (labelFromSplitOnly[bLabel]) ?	ReadLength : 
+	    //    						MaxInsertSize;
+	    //    size_t dist = (pos < aLabel.pos) ?  aLabel.pos - pos :
+	    //    				    pos - aLabel.pos;	
+	    //    if(dist > bRange) continue;
+	    //    //Check if the bLabel has already been assigned
+	    //    if(!bestSetMap.count(bLabel)){
+	    //        bestSetMap[bLabel] = jRegLabelSet_t();
+	    //        bestSetMap[bLabel].insert(aLabel);
+	    //    } else if(bestSetMap[bLabel].count(labelVec.at(first))){
+	    //        //bLabel has been assigned to a label with the same
+	    //        //score as aLabel
+	    //        bestSetMap[bLabel].insert(aLabel);
+	    //    }
+	    //}
 	    i++; 
 	    while( (i * 100.0) / double(labelVec.size()) > perc){
 	        perc += 1;
@@ -309,7 +360,7 @@ void FilterRegions(jRegMap_t & regionMap){
     	    }
     	}
 	//If no regions were removed, second pass is unecessary
-	if(!bFilter) continue;
+	if(!bFilter && filterRound > 1) continue;
 	fprintf(stderr,"\tAfter 1st Pass: %lu Regions remain\n",regionMap.size());
 	//Second Pass - Remove qnames which now map to only host or 
 	//If no qnames get removed the next iteration won't remove any regions
