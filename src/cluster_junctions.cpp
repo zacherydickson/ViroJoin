@@ -203,7 +203,7 @@ void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
 		    return (labelCount[a] + mutualLabelCount[a] > labelCount[b] + mutualLabelCount[b]);
 		});
 
-    fprintf(stderr,"Ordered %lu unique Junctions\n",labelVec.size());
+    fprintf(stderr,"\nOrdered %lu unique Junctions\n",labelVec.size());
 }
 
 //First loads all unique junctions and sorts them by order of prevalance
