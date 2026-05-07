@@ -421,7 +421,7 @@ void del_aux(bam1_t* read, const char* tag) {
 std::pair<int, const uint32_t*> cigar_str_to_array(std::string& cigar_str) {
     std::vector<uint32_t> opv;
 
-    int pos = 0, prev = 0;
+    size_t pos = 0, prev = 0;
     std::string bam_ops = BAM_CIGAR_STR;
     while ((pos = cigar_str.find_first_of(bam_ops, prev)) != std::string::npos) {
         opv.push_back(bam_cigar_gen(std::stoi(cigar_str.substr(prev, pos-prev)), bam_ops.find(cigar_str[pos])));
