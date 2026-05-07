@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.23...4.2.3)
 project(ViroJoin)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -8,7 +8,7 @@ set(CMAKE_SOURCE_DIR ${CMAKE_BINARY_DIR}/src)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 include_directories(
-    ${PROJECT_SOURCE_DIR}/htslib-1.21/include
+    ${PROJECT_SOURCE_DIR}/built_libs/include
     ${PROJECT_SOURCE_DIR}/libs
     ${PROJECT_SOURCE_DIR}/src
 )
@@ -43,7 +43,7 @@ add_executable(edge_mapper ${EDGE_MAPPER_SRC})
 set(FILTER_SRC libs/ssw.c libs/ssw_cpp.cpp src/filter.cpp)
 add_executable(filter ${FILTER_SRC})
 
-find_library(HTS_LIB hts PATHS htslib-1.21/lib NO_DEFAULT_PATH)
+find_library(HTS_LIB hts PATHS built_libs/lib NO_DEFAULT_PATH)
 find_package(ZLIB)
 target_link_libraries(addX2tag "${HTS_LIB}")
 target_link_libraries(cleanbam "${HTS_LIB}")
