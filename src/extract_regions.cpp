@@ -331,9 +331,9 @@ void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
     ParseReadXA(r1,cname1,r1Mappings);
     ParseReadXA(r2,cname2,r2Mappings);
 
-    for(int i = 0; i < r1Mappings.size(); i++){
+    for(size_t i = 0; i < r1Mappings.size(); i++){
 	const CXA & r1Map = r1Mappings[i];
-	for(int j = 0; j < r2Mappings.size(); j++){
+	for(size_t j = 0; j < r2Mappings.size(); j++){
 	    const CXA & r2Map = r2Mappings[j];
 	    //All alignments for a segment mapping to host must be to host
 	    //All alignments for a segment mapping to virus must be to virus
@@ -426,7 +426,7 @@ void ProcessSplitRead(	bam1_t *anchor, bam1_t *clip, int jSide,
     //Iterate over all pairs of anchor and clips
     //And note all uniq breakpoints this read supports
     std::unordered_set<std::string> uniqBPStrSet;
-    for(int i = 0; i < anchorMappings.size(); i++){
+    for(size_t i = 0; i < anchorMappings.size(); i++){
 	const CXA & anchorMap = anchorMappings[i];
         bool isViralAnchorXA = (VirusNameSet.count(anchorMap.chr));
         //Skip alt anchors which don't have the same virus status as the primary
@@ -434,7 +434,7 @@ void ProcessSplitRead(	bam1_t *anchor, bam1_t *clip, int jSide,
         if(bViralAnchor != isViralAnchorXA){
             continue;
         }
-	for(int j = 0; j < clipMappings.size(); j++){
+	for(size_t j = 0; j < clipMappings.size(); j++){
 	    const CXA & clipMap = clipMappings[j];
 	    hts_pos_t anchorPos = (isLeftClip) ? anchorMap.pos : anchorMap.endpos();
 	    hts_pos_t clipPos = (isLeftClip) ? clipMap.endpos() : clipMap.pos;
