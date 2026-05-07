@@ -13,7 +13,7 @@ struct jRegLabel_t {
     std::string chr;
     char strand;
     size_t pos;
-    int compare(const jRegLabel_t & other, int dist = 0) const {
+    int compare(const jRegLabel_t & other, size_t dist = 0) const {
 	if(this->chr != other.chr) {
 	    return (this->chr < other.chr) ? -1 : 1;
 	}
