@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23...4.2.3)
+cmake_minimum_required(VERSION 3.22)
 project(ViroJoin)
 
 set(CMAKE_CXX_STANDARD 14)

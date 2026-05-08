@@ -8,9 +8,6 @@ bin
 *.a
 CMakeCache.txt
 build/
-htslib-*/
-igraph-*/
-libleidenalg-*/
 built_libs/
 sparsehash-sparsehash-*/
 cmake_install.cmake
