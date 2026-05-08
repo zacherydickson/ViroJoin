@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "igraph/igraph.h"
 #include "config.h"
 #include "utils.h"
 
@@ -93,6 +94,8 @@ void FilterRegions(jRegMap_t & regionMap);
 void OutputRegions( std::string regfname, std::string readfname,
                     const jRegMap_t & regionMap);
 
+void IdentifyCommunities(const std::string fname);
+
 //==== MAIN
 
 //Passes over a candidate junction file twice
@@ -121,6 +124,9 @@ int main(int argc, char* argv[]) {
 
     jRegLabelVector_t labelVec;
     jRegLabelCount_t labelCount;
+
+    igraph_setup();
+    IdentifyCommunities(candidate_file_name);
 
     BestJRegSetMap_t regionAssignments;
     IdentifyBestJunctions(candidate_file_name,regionAssignments);
@@ -427,3 +433,43 @@ void OutputRegions(std::string regfname, std::string readfname, const jRegMap_t 
     fprintf(stderr,"\nRegions Printed\n");
 }
 
+
+
+//NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
+//  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
+//  strand in advance
+void IdentifyCommunities(const std::string fname) {
+    igraph_error_t result(IGRAPH_SUCCESS);
+    igraph_t * graph(nullptr);
+
+    result = igraph_empty(graph, 0, IGRAPH_UNDIRECTED);
+    if(result == IGRAPH_EINVAL){
+        fprintf(stderr,"Invalid verticies");
+    }
+    std::ifstream in(fname);
+    std::string chr,qname;
+    size_t off, end;
+    char score, strand;
+    std::unordered_map<std::string,igraph_t*> graphByMolecule;
+    while (in >> chr >> off >> end >> qname >> score >> strand){
+	jRegLabel_t label = {chr,strand,off};
+        std::string moleculeName = chr + strand;
+	bool bSplit = (qname[qname.length()-2] == '_');
+        //Construct a new graph for the molecule if it hasn't been encountered yet
+        if(!graphByMolecule.count(moleculeName)){
+            graphByMolecule[moleculeName] = nullptr;
+            igraph_empty(graphByMolecule[moleculeName],0,IGRAPH_UNDIRECTED);
+        }
+        //Reference for brevity
+        igraph_t* & graph = graphByMolecule[moleculeName];
+        result = igraph_add_vertices(graph,1,nullptr); 
+	//if(!labelCount.count(label)) {
+	//    labelCount[label] = 0;
+	//    labelVec.push_back(label);
+	//    labelFromSplitOnly[label] = true;
+	//}
+	//labelCount[label]++;
+	//if(!bSplit) labelFromSplitOnly[label] = false;
+    }
+    igraph_destroy(graph);
+}

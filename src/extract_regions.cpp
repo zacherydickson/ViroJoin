@@ -182,12 +182,14 @@ int main(int argc, char* argv[]) {
 //Given information to be printed, constructs a string describing the candidate breakpoint
 //Inputs -
 //Output - a string
-std::string ConstructCandidateString(   std::string chr, size_t pos,
+std::string ConstructCandidateString(   std::string chr, size_t bp_pos,
+                                        size_t distal_pos,
                                         std::string qname, char strand)
 {
-    std::string str =  chr + '\t' + std::to_string(pos) + '\t' +
-	                std::to_string(pos+ 1) + '\t' +
-                        qname + "\t.\t" + strand;
+    std::string str =  chr + '\t' + std::to_string(bp_pos) + '\t' +
+	                std::to_string(bp_pos+ 1) + '\t' +
+                        qname + '\t' + std::to_string(distal_pos) + '\t' +
+                        strand;
     return str;
 }
 
@@ -344,20 +346,24 @@ void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
 	    std::string virChr = r2Map.chr;
 	    hts_pos_t hostPos = r1Map.endpos();
 	    hts_pos_t virPos = r2Map.pos;
+            hts_pos_t hostDistalPos = r1Map.pos;
+            hts_pos_t virDistalPos = r2Map.endpos();
 	    if(r1IsVirus){ // r2 is Host Side
 		std::swap(hostChr,virChr);
 		hostPos = r2Map.endpos();
 		virPos = r1Map.pos;
+                hostDistalPos = r2Map.pos;
+                virDistalPos = r1Map.endpos();
 	    }
 	    std::array<char,2> strands = DeterminePairedJunctionOrientation(
 		    r1IsVirus,r1Map.bRev,r2Map.bRev);
 	    //Store the unique entries
             potentialEntries.insert(
-                    ConstructCandidateString(   hostChr,hostPos,qname,
-                                                strands.front()));
+                    ConstructCandidateString(   hostChr,hostPos,hostDistalPos,
+                                                qname,strands.front()));
             potentialEntries.insert(
-                    ConstructCandidateString(   virChr,virPos,qname,
-                                                strands.back()));
+                    ConstructCandidateString(   virChr,virPos,virDistalPos,
+                                                qname,strands.back()));
 	}
     }
 
