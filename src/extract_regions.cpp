@@ -101,6 +101,9 @@ std::array<char,2> DetermineJunctionOrientation (   bool bViralAnchor,
 		    bool isLeftClip, bool bAnchorRev, bool bClipRev, bool isR1);
 std::array<char,2> DeterminePairedJunctionOrientation(bool r1Virus, bool r1Rev,
 		    bool r2Rev);
+std::array<hts_pos_t,2> DeterminePairedJuncRelPos(bool r1Virus, 
+                    bool r1Rev, bool r2Rev, hts_pos_t r1L, hts_pos_t r1R,
+                    hts_pos_t r2L, hts_pos_t r2R);
 bool IsLeftOfJunction(uint8_t flag);
 void LoadAnchorOrientation(std::string fname);
 void LoadGoodClips(std::string fname);
@@ -238,6 +241,30 @@ std::array<char,2> DeterminePairedJunctionOrientation(bool r1Virus, bool r1Rev,
     return {hostStrand,virStrand};
 }
 
+//Procedure have an array of 4 positions, and manipulate it according to the
+//specific read characteristics
+//The initial assumption is that the pair does support a junction and therefore
+//the 5` end of a read is the junction distal position
+std::array<hts_pos_t,2> DeterminePairedJuncRelPos(bool r1Virus,
+                    bool r1Rev, bool r2Rev, hts_pos_t r1L, hts_pos_t r1R,
+                    hts_pos_t r2L, hts_pos_t r2R)
+{
+    hts_pos_t r1prox =  r1Rev ? r1L : r1R;
+    hts_pos_t r1dist = !r1Rev ? r1L : r1R;
+    hts_pos_t r2prox =  r2Rev ? r2L : r2R;
+    hts_pos_t r2dist = !r2Rev ? r2L : r2R;
+    //Start with the assumption that host is r1
+    //so that it goes HD,HP | VP,VD
+    std::array<hts_pos_t,4> p = {r1dist,r1prox,r2prox,r2dist};
+    //If host is r2, everything 
+    if(r1Virus){
+        std::reverse(std::begin(p),std::end(p));
+    }
+    //Proximal positions are the middle two
+    return {p[1],p[2]};
+}
+
+
 //Opens a bam file containing mapped clips.
 //It is assumed that the bam file only contains primary mappped clips
 //(no secondary/supplementary/unmapped)
@@ -339,18 +366,22 @@ void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
 	    //All alignments for a segment mapping to virus must be to virus
 	    if(r1IsVirus != bool(VirusNameSet.count(r1Map.chr))) return;
 	    if(r2IsVirus != bool(VirusNameSet.count(r2Map.chr))) return;
+            //Determine junction orientation
+	    std::array<char,2> strands = DeterminePairedJunctionOrientation(
+		    r1IsVirus,r1Map.bRev,r2Map.bRev);
+            std::array<hts_pos_t,2> proxPos = DeterminePairedJuncRelPos(
+                    r1IsVirus,r1Map.bRev,r2Map.bRev,
+                    r1Map.pos,r1Map.endpos(),
+                    r2Map.pos,r2Map.endpos());
+            //Case: H + V + r1is Host
 	    //Construct Entries
 	    std::string hostChr = r1Map.chr;
 	    std::string virChr = r2Map.chr;
-	    hts_pos_t hostPos = r1Map.endpos();
-	    hts_pos_t virPos = r2Map.pos;
-	    if(r1IsVirus){ // r2 is Host Side
+            if(r1IsVirus){ // r2 is Host Side
 		std::swap(hostChr,virChr);
-		hostPos = r2Map.endpos();
-		virPos = r1Map.pos;
-	    }
-	    std::array<char,2> strands = DeterminePairedJunctionOrientation(
-		    r1IsVirus,r1Map.bRev,r2Map.bRev);
+            }
+	    hts_pos_t hostPos = proxPos[0];
+	    hts_pos_t virPos = proxPos[1];
 	    //Store the unique entries
             potentialEntries.insert(
                     ConstructCandidateString(   hostChr,hostPos,qname,
