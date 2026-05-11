@@ -49,5 +49,9 @@ Version 1.1.0
 Version 1.1.1
         Minor Refactor to avoid comparisons between mismatched types
         Minor changes to building of pre-packaged dependencies
-Version 1.1.2
-        Bug Fix where identified candidate junction positions for paired reads in some junction configurations were at the wrong end of a read
+Version 2.0.0
+        Complete overhaul of internal representation of junction support
+        All support is one the basis of a molecule which is inferred from the alignments of reads
+        This Prevents a Major Bug where a junction could be supported by one read in a pair,
+         despite the mate indicating all reads were from PCR duplicates of the same molecule
+        QC information on strand bias and read position bias is now incorporated into the filtering
