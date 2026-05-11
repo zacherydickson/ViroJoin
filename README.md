@@ -68,6 +68,8 @@ samtools faidx host+virus.fa
 ViroJoin does not perform any pre-processing on the input fastq files.
 Inputs for for ViroJoin should first pre processed to remove adapters, low-quality bases and reads, and polynucleotide artifacts such as poly-A or Poly-Gs.
 
+We do not recommend the use of trimming from the 5 prime end of reads as this can interfere with deduplication efforts.
+
 We suggest [fastp](https://github.com/OpenGene/fastp).
 
 ## Running
