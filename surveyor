@@ -121,6 +121,7 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "fqBam"     : os.path.join("bam_0","retained-pairs.namesorted.bam"),
         "fqStats"   : os.path.join("bam_0","stats.txt"),
         "fqSrtBam"  : os.path.join("bam_0","retained-pairs.remapped.cs.bam"),
+        "allNSBam"  : os.path.join("bam_0","all_alignments.ns.bam"),
         "frawRes"   : "results.t1.txt",
         "hBed"      : "h.bed",
         "hSeq"      : "host_bp_seqs.fa",
@@ -442,6 +443,14 @@ if missing_file(path_dict["vClip"]):
 # map host clips
 if missing_file(path_dict["hClip"]):
     map_clips(f"{bam_workspace}/host-clips", cmd_args.virus_reference)
+# collect all alignments
+collect_alignments_cmd = (  f"{cmd_args.samtools} merge -u -"
+                            f" {PATH_DICT['fqSrtBam']}"
+                            f" {path_dict['vClip']} {path_dict['hClip']} | "
+                            f" {cmd_args.samtools} sort -n - >|"
+                            f" {PATH_DICT['allNSBam']}" )
+if missing_file(PATH_DICT["allNSBam"]):
+    execute(collect_alignments_cmd)
 
 #Extract candidate host and viral positions
 extract_regions_cmd = ( f"{BIN_DICT['extract_regions']}"
