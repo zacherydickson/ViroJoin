@@ -128,7 +128,7 @@ void ProcessSplitRead(	bam1_t *anchor, bam1_t clip, int jSide,
 			std::ofstream & outbed);
 void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname, 
 			int jSide, std::ofstream & outbed);
-AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* read_buf);
+AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 
 // ===== MAIN
 
@@ -181,16 +181,16 @@ int main(int argc, char* argv[]) {
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
-        std::cout << "BEGIN BLOCK\n";
+        std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
         //TODO: Process Aln Vec
         std::string qname;
         uint8_t flag;
         for( bam1_t* aln : *alnVecPtr ){
             ParseAlnID(aln,qname,flag);
-            std::cout << qname << "\t" << flag << "\n";
-            bam_destroy1(aln);
+            std::cout << qname << "\t" << int(flag) << "\n";
         }
         DestroyAlnVector(alnVecPtr);
+        std::cout << "END BLOCK\n";
     }
     close_samFile(alnFile);
     bam_destroy1(read_buf);
@@ -352,6 +352,8 @@ void DestroyAlnVector(AlnVector_pt & alnVec) {
 //  if $2 is present then the 0x1 bit is set indicating the alignment is a clip
 //  the 0x2 bit is set if clipped and $3 is L
 //  the 0x4 bit is set if clipped and $4 is 1
+//  IF The input read names end in _[LR]_[12], they will be interpretted as
+//  clipped
 //Inputs - a reference to a string in which to place the raw query name
 //       - a reference to a byte in which to store flags
 //Output - error code, 0 for success
@@ -362,18 +364,22 @@ int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag){
     std::string alnName = bam_get_qname(aln);
     std::vector<std::string> nameParts = strsplit(alnName,'_');
     qname = nameParts[0];
-    bool isClip = nameParts.size() > 1;
-    if(isClip) {
-        flag |= 0x1; //Set the clip bit
-        if(nameParts.size() != 3) { return 2; } //Malformed; missing/extra '_'
-        char side = nameParts[1][0];
-        if(side == 'L'){
-            flag |= 0x2; //Set the left bit
-        } else if(side != 'R') { return 3;} //Malformed; non L/R
-        char read = nameParts[2][0];
-        if(read == '1'){
-            flag |= 0x4; //Set the R1 bit
-        } else if (read != '2') { return 4;} //Malformed; non 1/2
+    if(nameParts.size() > 1) {
+        for(size_t i = 1; i < nameParts.size() - 2; i++){
+            qname += "_" + nameParts[i];
+        }
+        char side = nameParts[nameParts.size() - 2][0];
+        char read = nameParts[nameParts.size() - 1][0];
+        if( (side == 'L' || side == 'R') &&
+            (read == '1' || read == '2')) 
+        { // Is clipped
+            flag |= 0x1; //Set the clip bit
+            if(side == 'L'){ flag |= 0x2; } //Set the left bit
+            if(read == '1'){ flag |= 0x4; } //Set the R1 bit
+        } else {
+            qname += "_" + nameParts[nameParts.size() - 2];
+            qname += "_" + nameParts[nameParts.size() - 1];
+        }
     }
     return 0;
 }
@@ -609,34 +615,49 @@ void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname,
 //Inputs - an open_samFile_t pointer to a valid open bam file
 //       - a valid bam1_t object to act as a lookahed buffer
 //Output - an AlnVector_pt object, null in the case of an empty vector
-AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* read_buf) {
+//Exceptions - 
+AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf) {
     AlnVector_pt alnVector( new AlnVector_t());
     std::string qName = "";
-    uint8_t flag;
+    uint8_t flag = 0;
     int parseRes = 0;
     int readRes = 0;
     if(read_buf){
         alnVector->push_back(bam_dup1(read_buf));
         parseRes = ParseAlnID(read_buf,qName,flag);
-        if(parseRes){ throw parseRes; }
+        if(parseRes){ 
+            char buf[100];
+            sprintf(buf,"ID parse error: %d",parseRes);
+            throw std::invalid_argument(buf);
+        }
+    } else {
+        read_buf = bam_init1();
     }
     while ((readRes = sam_read1(alnFile->file, alnFile->header, read_buf)) >= 0) {
-        std::string curQName;
+        std::string curQName("");
         parseRes = ParseAlnID(read_buf,curQName,flag);
-        if(parseRes){ throw parseRes; }
+        if(parseRes){ 
+            char buf[100];
+            sprintf(buf,"ID parse error: %d",parseRes);
+            throw std::invalid_argument(buf);
+        }
+        //std::cerr << alnVector->size() << "\t"  << qName << "\t" << curQName << "\t" << int(flag) << "\n";
         if(qName == ""){
             qName = curQName;
-        } else if (qName == curQName){
+        }
+        if (qName == curQName){
             alnVector->push_back(bam_dup1(read_buf));
         } else {
-
+            break;
         }
     }
     if(readRes == -1){
         bam_destroy1(read_buf);
         read_buf = nullptr;
     } else if(readRes < -1){
-        throw readRes;
+        char buf[100];
+        sprintf(buf,"BAM Read Error: %d",readRes);
+        throw std::invalid_argument(buf);
     }
     if(!alnVector->size()){
         return nullptr;
