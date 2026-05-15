@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <vector>
 #include <array>
 #include <set>
@@ -9,6 +10,7 @@
 #include <stdexcept>
 
 #include "sam_utils.h"
+#include "str_utils.h"
 #include "config.h"
 #include <cptl_stl.h>
 #include "utils.h"
@@ -87,6 +89,9 @@ typedef std::array<bam1_t*,4> ClipArray_t;
 typedef std::unordered_map<std::string, ClipArray_t> GoodClipMap_t;
 typedef std::unordered_set<std::string> QNameSet_t;
 
+typedef std::vector<bam1_t*> AlnVector_t;
+typedef std::unique_ptr<AlnVector_t> AlnVector_pt;
+
 std::unordered_set<std::string> VirusNameSet;
 GoodClipMap_t GoodClipMap;
 QNameSet_t GoodClipSet;
@@ -96,6 +101,7 @@ QNameSet_t GoodClipSet;
 
 std::string ConstructCandidateString();
 void DestroyGoodClips();
+void DestroyAlnVector(AlnVector_pt & alnVec);
 //char DetermineClipJunctionStrand (uint8_t flag);
 std::array<char,2> DetermineJunctionOrientation (   bool bViralAnchor,
 		    bool isLeftClip, bool bAnchorRev, bool bClipRev, bool isR1);
@@ -110,6 +116,7 @@ void LoadGoodClips(std::string fname);
 //void OutputBEDEntries(	std::ofstream & outbed, const bam1_t* read,
 //			std::string cname, uint8_t clipflag = 0x0,
 //			std::string qname = std::string());
+int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag);
 void ParseReadXA(bam1_t *read, std::string primaryContig,std::vector<CXA> & out);
 //void ProcessAnchor(bam1_t *read, std::string cname, std::ofstream & outbed);
 //void ProcessClip(bam1_t *read, std::string cname, std::ofstream & outbed);
@@ -121,6 +128,7 @@ void ProcessSplitRead(	bam1_t *anchor, bam1_t clip, int jSide,
 			std::ofstream & outbed);
 void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname, 
 			int jSide, std::ofstream & outbed);
+AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* read_buf);
 
 // ===== MAIN
 
@@ -128,7 +136,7 @@ void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname,
 //candidate fragments from the the BWA alignment
 //Output the results in BEDPE format
 //  ([chr,off,end] up and down, name, bSplit, [strand] up and down,
-//      user defined: [cigar] up and down)
+//      user defined: [cigar] up and down, bHostUp)
 //Inputs - A path to the viral reference in fasta format
 //	 - A path to the working directory
 //	 - A path to the bam workspace
@@ -143,10 +151,14 @@ void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname,
 //The score field is used to store whether the known sequence of the fragment
 //  contains the breakpoint: 1 is yes, no means a chimeric read pair
 //The strand columns inform the breakpoint configuration
+//  it also defines the direction of up and downstream:
+//      + = upstream < pos < downstream
+//      - = downstream < pos < upstream
 //The Cigar columns tell how the intervals are aligned
 //  NOTE: The N (gap) operation is used to indicate when a pair of reads do not
 //  overlap but one member of the pair maps to both the host and virus
 //  AAAAAANNNNBBBbbb <- eg where A is read 1, B is read 2 uc is up and lc is down
+//The bHostUp is 1 if the upstream inteval is from the host and 0 otherwise
 int main(int argc, char* argv[]) {
     //##PARSE INPUTS
     std::string virus_names_file = argv[1];
@@ -165,19 +177,38 @@ int main(int argc, char* argv[]) {
     int nThread = parse_config_threads(workdir + "/config.txt");
     ctpl::thread_pool thread_pool(nThread); */
 
-    //##LOAD DATA INTO GLOBAL VARIABLES
-    //Load names of viral contigs
-    LoadVirusNames(virus_names_file,VirusNameSet);
-    //Load the ids and directions of clips which map properly
-    for (int side = JS_HOST; side <= JS_VIRUS; side++){
-        LoadGoodClips(clip_bam_fnames[side]);
-        ProcessSplitReads(  anchor_bam_fnames[side],clip_bam_fnames[side],
-			    side,outbed);
-        DestroyGoodClips();
-    }
 
-    //Pass over the paired reads to find valid chimeras
-    ProcessPairs(bam_fname,outbed);
+    bam1_t* read_buf = nullptr;
+    open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
+    for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
+        std::cout << "BEGIN BLOCK\n";
+        //TODO: Process Aln Vec
+        std::string qname;
+        uint8_t flag;
+        for( bam1_t* aln : *alnVecPtr ){
+            ParseAlnID(aln,qname,flag);
+            std::cout << qname << "\t" << flag << "\n";
+            bam_destroy1(aln);
+        }
+        DestroyAlnVector(alnVecPtr);
+    }
+    close_samFile(alnFile);
+    bam_destroy1(read_buf);
+
+
+    ////##LOAD DATA INTO GLOBAL VARIABLES
+    ////Load names of viral contigs
+    //LoadVirusNames(virus_names_file,VirusNameSet);
+    ////Load the ids and directions of clips which map properly
+    //for (int side = JS_HOST; side <= JS_VIRUS; side++){
+    //    LoadGoodClips(clip_bam_fnames[side]);
+    //    ProcessSplitReads(  anchor_bam_fnames[side],clip_bam_fnames[side],
+    //    		    side,outbed);
+    //    DestroyGoodClips();
+    //}
+
+    ////Pass over the paired reads to find valid chimeras
+    //ProcessPairs(bam_fname,outbed);
 }
 
 //===== Function Defintions
@@ -305,6 +336,46 @@ void DestroyGoodClips(){
 	}
     }
     GoodClipMap.clear();
+}
+
+
+//Free the bam1_t objects in an alignment vector
+void DestroyAlnVector(AlnVector_pt & alnVec) {
+    for (bam1_t * aln : *alnVec){
+        bam_destroy1(aln);
+    }
+}
+
+//parses the query name from an alignment object
+//  query names are assumed in the form ([^_]+)(_([LR])_([12]))?
+//  where $1 is the raw qname to be extracted
+//  if $2 is present then the 0x1 bit is set indicating the alignment is a clip
+//  the 0x2 bit is set if clipped and $3 is L
+//  the 0x4 bit is set if clipped and $4 is 1
+//Inputs - a reference to a string in which to place the raw query name
+//       - a reference to a byte in which to store flags
+//Output - error code, 0 for success
+int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag){
+    qname = "";
+    flag = 0;
+    if(!aln) { return 1; } //Undefined aln object
+    std::string alnName = bam_get_qname(aln);
+    std::vector<std::string> nameParts = strsplit(alnName,'_');
+    qname = nameParts[0];
+    bool isClip = nameParts.size() > 1;
+    if(isClip) {
+        flag |= 0x1; //Set the clip bit
+        if(nameParts.size() != 3) { return 2; } //Malformed; missing/extra '_'
+        char side = nameParts[1][0];
+        if(side == 'L'){
+            flag |= 0x2; //Set the left bit
+        } else if(side != 'R') { return 3;} //Malformed; non L/R
+        char read = nameParts[2][0];
+        if(read == '1'){
+            flag |= 0x4; //Set the R1 bit
+        } else if (read != '2') { return 4;} //Malformed; non 1/2
+    }
+    return 0;
 }
 
 void ParseReadXA (  bam1_t *read, std::string primaryContig,
@@ -526,3 +597,49 @@ void ProcessSplitReads(	std::string anchor_fname, std::string clip_fname,
     bam_destroy1(read);
 }
 
+
+
+//Given an open bam file, and a read object to act as lookahead buffer, loads
+// reads from the bam file into a vector until a read with a different id is
+// loaded, this is retained in the lookahead buffer
+// a null ptr is returned if no read can be read from the bam file, and the 
+// lookahed buffer is empty
+//The caller is responsible for detroying and freeing all bam1_t objects in the
+//  vector
+//Inputs - an open_samFile_t pointer to a valid open bam file
+//       - a valid bam1_t object to act as a lookahed buffer
+//Output - an AlnVector_pt object, null in the case of an empty vector
+AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* read_buf) {
+    AlnVector_pt alnVector( new AlnVector_t());
+    std::string qName = "";
+    uint8_t flag;
+    int parseRes = 0;
+    int readRes = 0;
+    if(read_buf){
+        alnVector->push_back(bam_dup1(read_buf));
+        parseRes = ParseAlnID(read_buf,qName,flag);
+        if(parseRes){ throw parseRes; }
+    }
+    while ((readRes = sam_read1(alnFile->file, alnFile->header, read_buf)) >= 0) {
+        std::string curQName;
+        parseRes = ParseAlnID(read_buf,curQName,flag);
+        if(parseRes){ throw parseRes; }
+        if(qName == ""){
+            qName = curQName;
+        } else if (qName == curQName){
+            alnVector->push_back(bam_dup1(read_buf));
+        } else {
+
+        }
+    }
+    if(readRes == -1){
+        bam_destroy1(read_buf);
+        read_buf = nullptr;
+    } else if(readRes < -1){
+        throw readRes;
+    }
+    if(!alnVector->size()){
+        return nullptr;
+    }
+    return alnVector;
+}
