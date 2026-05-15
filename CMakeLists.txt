@@ -25,6 +25,9 @@ add_executable(addX2tag ${ADD_X2_TAG_SRC})
 set(CLEAN_BAM_SRC src/cleanbam.cpp)
 add_executable(cleanbam ${CLEAN_BAM_SRC})
 
+set(ENUM_CHIM_FRAG_SRC src/enumerate_chimeric_fragments.cpp)
+add_executable(enumerate_chimeric_fragments ${ENUM_CHIM_FRAG_SRC})
+
 set(ENUMERATE_EDGES_SRC src/enumerate_edges.cpp)
 add_executable(enumerate_edges ${ENUMERATE_EDGES_SRC})
 
@@ -47,6 +50,7 @@ find_library(HTS_LIB hts PATHS built_libs/lib NO_DEFAULT_PATH)
 find_package(ZLIB)
 target_link_libraries(addX2tag "${HTS_LIB}")
 target_link_libraries(cleanbam "${HTS_LIB}")
+target_link_libraries(enumerate_chimeric_fragments "${HTS_LIB}")
 target_link_libraries(cluster_junctions "${HTS_LIB}")
 target_link_libraries(isolate_relevant_pairs "${HTS_LIB}")
 target_link_libraries(isolate_relevant_pairs_fq "${HTS_LIB}")
