@@ -69,7 +69,7 @@ class CXA {
     size_t endpos () const {
 	return this->pos + bam_cigar2rlen(this->nCigar,this->cigar); 
     }
-    uint8_t clipSide(){
+    uint8_t clipSide() const {
         //0b00 = 0 - Not clipped
         //0b01 = 1 - Left Clipped
         //0b10 = 2 - Right Clipped

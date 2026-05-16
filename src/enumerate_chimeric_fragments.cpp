@@ -11,6 +11,7 @@
 
 #include "sam_utils.h"
 #include "str_utils.h"
+#include "ChimericFragment.h"
 #include "config.h"
 #include <cptl_stl.h>
 #include "utils.h"
@@ -118,6 +119,7 @@ void LoadGoodClips(std::string fname);
 //			std::string qname = std::string());
 int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag);
 void ParseReadXA(bam1_t *read, std::string primaryContig,std::vector<CXA> & out);
+void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr);
 //void ProcessAnchor(bam1_t *read, std::string cname, std::ofstream & outbed);
 //void ProcessClip(bam1_t *read, std::string cname, std::ofstream & outbed);
 void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
@@ -158,7 +160,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //  NOTE: The N (gap) operation is used to indicate when a pair of reads do not
 //  overlap but one member of the pair maps to both the host and virus
 //  AAAAAANNNNBBBbbb <- eg where A is read 1, B is read 2 uc is up and lc is down
-//The bHostUp is 1 if the upstream inteval is from the host and 0 otherwise
+//The bHostUp is 1 if the upstream interval is from the host and 0 otherwise
 int main(int argc, char* argv[]) {
     //##PARSE INPUTS
     std::string virus_names_file = argv[1];
@@ -177,28 +179,30 @@ int main(int argc, char* argv[]) {
     int nThread = parse_config_threads(workdir + "/config.txt");
     ctpl::thread_pool thread_pool(nThread); */
 
+    //##LOAD DATA INTO GLOBAL VARIABLES
+    //Load names of viral contigs
+    LoadVirusNames(virus_names_file,VirusNameSet);
 
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
-        std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
-        //TODO: Process Aln Vec
-        std::string qname;
-        uint8_t flag;
-        for( bam1_t* aln : *alnVecPtr ){
-            ParseAlnID(aln,qname,flag);
-            std::cout << qname << "\t" << int(flag) << "\n";
-        }
-        DestroyAlnVector(alnVecPtr);
-        std::cout << "END BLOCK\n";
+        //std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
+        ProcessAlnVec(outbed,alnFile->header,std::move(alnVecPtr));
+        ////TODO: Process Aln Vec
+        //std::string qname;
+        //uint8_t flag;
+        //for( bam1_t* aln : *alnVecPtr ){
+        //    ParseAlnID(aln,qname,flag);
+        //    std::cout << qname << "\t" << int(flag) << "\n";
+        //}
+        //DestroyAlnVector(alnVecPtr);
+        //std::cout << "END BLOCK\n";
     }
     close_samFile(alnFile);
     bam_destroy1(read_buf);
 
 
-    ////##LOAD DATA INTO GLOBAL VARIABLES
-    ////Load names of viral contigs
-    //LoadVirusNames(virus_names_file,VirusNameSet);
+    
     ////Load the ids and directions of clips which map properly
     //for (int side = JS_HOST; side <= JS_VIRUS; side++){
     //    LoadGoodClips(clip_bam_fnames[side]);
@@ -410,6 +414,75 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 	prev=pos+1;
 	out.emplace_back(xaStr);
     }
+}
+
+//Given a vector of alignments, stitches combinations of alignments into 
+// consistent fragments and outputs them to the provided ofstream
+//Each alignment may have alternative alignments, any of which is considered 
+//Equally valid
+//Responsible for destrotying alignments in tha alnVector
+//Inputs - an open output file stream ofstream object
+//       - an AlnVector_pt object to process
+//Output - None, writes to outbed
+void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
+    std::cerr << "Init Proc Aln\n";
+    std::vector<std::vector<CXA>> alnMappings;
+    std::string qName("");
+    std::vector<uint8_t> flagVec;
+    //Load up all alternative alignments
+    for( bam1_t* & aln : *alnVecPtr){
+        alnMappings.push_back(std::vector<CXA>());
+        flagVec.push_back(0);
+	std::string cname = sam_hdr_tid2name(header,aln->core.tid);
+        ParseAlnID(aln,qName,flagVec.back());
+        if(!(flagVec.back() & 0x1) && aln->core.flag & BAM_FREAD1) {
+            flagVec.back() |= 0x4;
+        }
+        ParseReadXA(aln,cname,alnMappings.back());
+        std::cerr << alnMappings.back().size() << "\t";
+    }
+    std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
+    //Construct all fragments which are consistent with the alignments
+    std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t()};
+    fragmentVec[1].name = qName;
+    std::vector<ChimericFragment_t> fragmentVecTmp;
+    for(size_t i = 0; i < alnMappings.size(); i++){
+        const std::vector<CXA> & partMappings = alnMappings[i];
+        const uint8_t & flag = flagVec[i];
+        while(!fragmentVec.empty()){
+            ChimericFragment_t & parentFrag = fragmentVec.back();
+            for( const CXA & cxa : partMappings){
+                bool isViral = VirusNameSet.count(cxa.chr);
+                ChimericFragment_t frag = parentFrag;
+                if(frag.add_alignment(  cxa,
+                                        flag & 0x1 , flag & 0x2, flag & 0x4,
+                                        !isViral)){
+                    fragmentVecTmp.push_back(frag);
+                }
+            }
+            fragmentVec.pop_back();
+        }
+        std::swap(fragmentVec,fragmentVecTmp);
+    }
+    std::cerr << fragmentVec.size() << "\n";
+    bool bValid = true;
+    //Perform check that
+    //all fragments are chimeric, or incomplete
+    for(const ChimericFragment_t & frag : fragmentVec ){
+        if(frag.is_complete() && !frag.is_chimeric()){
+            bValid = false;
+            break;
+        }
+    }
+    if(bValid){
+        for(const ChimericFragment_t & frag : fragmentVec ){
+            if(!frag.is_complete()) { continue; }
+            std::cerr << frag.to_bedpe() << "\n";
+            outbed << frag.to_bedpe() << "\n";
+        }
+    }
+    DestroyAlnVector(alnVecPtr);
+    std::cerr << "Terminate Proc Aln\n";
 }
 
 void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
