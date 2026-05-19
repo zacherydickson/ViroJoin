@@ -17,6 +17,12 @@ extern const int MIN_CLIP_LEN;
 
 class CXA {
     public:
+        enum CLIP_SIDE {
+            UNCLIPPED = 0b00,
+            LEFT_CLIPPED = 0b01,
+            RIGHT_CLIPPED = 0b10,
+            DOUBLE_CLIPPED = 0b11
+        };
     std::string chr;
     uint64_t pos;
     uint32_t * cigar;
@@ -432,6 +438,7 @@ std::pair<int, const uint32_t*> cigar_str_to_array(std::string& cigar_str) {
     std::copy(opv.begin(), opv.end(), opa);
     return std::make_pair(opv.size(), opa);
 }
+
 std::string cigar_array_to_str(int cigar_len, const uint32_t* cigar) {
     std::stringstream ss;
     for (int i = 0; i < cigar_len; i++) {

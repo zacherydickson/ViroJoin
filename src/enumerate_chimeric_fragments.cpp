@@ -138,7 +138,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //candidate fragments from the the BWA alignment
 //Output the results in BEDPE format
 //  ([chr,off,end] up and down, name, bSplit, [strand] up and down,
-//      user defined: [cigar] up and down, bHostUp)
+//      user defined: [Mate flag] up and down
 //Inputs - A path to the viral reference in fasta format
 //	 - A path to the working directory
 //	 - A path to the bam workspace
@@ -153,14 +153,13 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //The score field is used to store whether the known sequence of the fragment
 //  contains the breakpoint: 1 is yes, no means a chimeric read pair
 //The strand columns inform the breakpoint configuration
-//  it also defines the direction of up and downstream:
-//      + = upstream < pos < downstream
-//      - = downstream < pos < upstream
-//The Cigar columns tell how the intervals are aligned
-//  NOTE: The N (gap) operation is used to indicate when a pair of reads do not
-//  overlap but one member of the pair maps to both the host and virus
-//  AAAAAANNNNBBBbbb <- eg where A is read 1, B is read 2 uc is up and lc is down
-//The bHostUp is 1 if the upstream interval is from the host and 0 otherwise
+//      + = off is distal, end is proximal
+//      - = off is proximal, end is distal
+//The Mate flag column informs which of the mates contribute to the interval
+//  0 - no mates (only for incomplete, non chimeric entries)
+//  1 - supported by R1
+//  2 - supported by R2
+//  3 - supported by both
 int main(int argc, char* argv[]) {
     //##PARSE INPUTS
     std::string virus_names_file = argv[1];
@@ -419,13 +418,19 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 //Given a vector of alignments, stitches combinations of alignments into 
 // consistent fragments and outputs them to the provided ofstream
 //Each alignment may have alternative alignments, any of which is considered 
-//Equally valid
-//Responsible for destrotying alignments in tha alnVector
+//  Equally valid
+//Also considers all valid clipping arrangements for an alignment,
+//  only the consistent combinations of alt alignments and clip configurations
+//  which have both distal positions corresponding to read termini, and infer
+//  a chimeric fragment will be carried forward
+//  This isn't the most efficient method, but it does allow considering
+//  everything
+//Responsible for destroying alignments in tha alnVector
 //Inputs - an open output file stream ofstream object
 //       - an AlnVector_pt object to process
 //Output - None, writes to outbed
 void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
-    std::cerr << "Init Proc Aln\n";
+    //std::cerr << "Init Proc Aln\n";
     std::vector<std::vector<CXA>> alnMappings;
     std::string qName("");
     std::vector<uint8_t> flagVec;
@@ -439,13 +444,14 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
             flagVec.back() |= 0x4;
         }
         ParseReadXA(aln,cname,alnMappings.back());
-        std::cerr << alnMappings.back().size() << "\t";
+        //std::cerr << alnMappings.back().size() << "\t";
     }
-    std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
+    //std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
     //Construct all fragments which are consistent with the alignments
-    std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t()};
-    fragmentVec[1].name = qName;
+    std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t(qName)};
+//    fragmentVec[0].name = qName;
     std::vector<ChimericFragment_t> fragmentVecTmp;
+    //std::cerr << "Pre Build Fragments\n";
     for(size_t i = 0; i < alnMappings.size(); i++){
         const std::vector<CXA> & partMappings = alnMappings[i];
         const uint8_t & flag = flagVec[i];
@@ -453,36 +459,69 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
             ChimericFragment_t & parentFrag = fragmentVec.back();
             for( const CXA & cxa : partMappings){
                 bool isViral = VirusNameSet.count(cxa.chr);
-                ChimericFragment_t frag = parentFrag;
-                if(frag.add_alignment(  cxa,
-                                        flag & 0x1 , flag & 0x2, flag & 0x4,
-                                        !isViral)){
-                    fragmentVecTmp.push_back(frag);
+                uint8_t clipSide = cxa.clipSide();
+                if(flag & 0x1){ // If the alignment is from a clip
+                    //If left clip, then the right is clipped away
+                    //Otherwise the left is clipped away
+                    clipSide |= (flag & 0x2) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+                }
+                //We are setting the host side as interval 1 by convention,
+                //as a result, any molecules which do not have both intervals
+                //is non chimeric, it will also be incomplete
+                ChimericFragment_t::IV_IDX ivIdx =  (isViral) ?
+                                                    ChimericFragment_t::IV2 :
+                                                    ChimericFragment_t::IV1;
+                //Attempt addition of the alignment assuming it is:
+                //  unclipped - unless it is already known to be clipped
+                //  left-clipped - unless there are no left clipped bases
+                //  right-clipped - unless there are no right clipped bases
+                for( CXA::CLIP_SIDE side : 
+                        {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
+                {
+                    ChimericFragment_t frag = parentFrag;
+                    //Skip attempt UNCLIPPED if the alignment is a clip!
+                    if((side == CXA::UNCLIPPED) && (flag & 0x1)) { continue; }
+                    //Skip left clip if the alignment isn't left clipped
+                    if((side == CXA::LEFT_CLIPPED) && !(clipSide & CXA::LEFT_CLIPPED)) { continue; }
+                    //Skip right clip if the alignment isn't right clipped
+                    if((side == CXA::RIGHT_CLIPPED) && !(clipSide & CXA::RIGHT_CLIPPED)) { continue; }
+                    //Attempt to add the alignment interpretting it with the 
+                    //  current clip status and direction
+                    if(frag.add_alignment(  cxa, side != CXA::UNCLIPPED ,
+                                            side == CXA::RIGHT_CLIPPED,
+                                            flag & 0x4, ivIdx))
+                    {
+                        fragmentVecTmp.push_back(frag);
+                    }// else {
+                    //    std::cerr << "Failure to add\n";
+                    //}
                 }
             }
             fragmentVec.pop_back();
         }
         std::swap(fragmentVec,fragmentVecTmp);
     }
-    std::cerr << fragmentVec.size() << "\n";
+    //std::cerr << fragmentVec.size() << "\n";
     bool bValid = true;
     //Perform check that
-    //all fragments are chimeric, or incomplete
+    //all fragments are chimeric
     for(const ChimericFragment_t & frag : fragmentVec ){
-        if(frag.is_complete() && !frag.is_chimeric()){
+        //std::cerr << "TEST\n" << frag.to_bedpe() << "\n";
+        if(!frag.is_chimeric()){
             bValid = false;
             break;
         }
     }
     if(bValid){
+        //Only output complete fragments
         for(const ChimericFragment_t & frag : fragmentVec ){
             if(!frag.is_complete()) { continue; }
-            std::cerr << frag.to_bedpe() << "\n";
+            //std::cerr << frag.to_bedpe() << "\n";
             outbed << frag.to_bedpe() << "\n";
         }
     }
     DestroyAlnVector(alnVecPtr);
-    std::cerr << "Terminate Proc Aln\n";
+    //std::cerr << "Terminate Proc Aln\n";
 }
 
 void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
