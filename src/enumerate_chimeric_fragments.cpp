@@ -514,10 +514,15 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
     }
     if(bValid){
         //Only output complete fragments
+        std::unordered_set<std::string> knownFragments;
         for(const ChimericFragment_t & frag : fragmentVec ){
             if(!frag.is_complete()) { continue; }
-            //std::cerr << frag.to_bedpe() << "\n";
-            outbed << frag.to_bedpe() << "\n";
+            std::string bedpeStr = frag.to_bedpe();
+            auto pair = knownFragments.insert(bedpeStr);
+            if(pair.second){
+                //std::cerr << frag.to_bedpe() << "\n";
+                outbed << bedpeStr << "\n";
+            }
         }
     }
     DestroyAlnVector(alnVecPtr);
