@@ -95,7 +95,11 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
     uint16_t & flag = this->flag[ivIdx];
     //Step one: Assign up and down based on the host sequence
     //  this collapses H+V+ and V-H-, etc. together in the end
-    size_t off = (aln.pos > 0) ? (aln.pos - 1) : 0;
+    //aln coords are zero indexed
+    //bed uses half open intervals
+    //off should be inclusive 0 indexed (or exclusive 1 indexed)
+    //end should be exclusive 0 indexed (i.e inclusive 1 indexed)
+    size_t off = (aln.pos > 0) ? (aln.pos) : 0;
     size_t end = (aln.endpos());
     //OpensRight to avoid confusion with member variable OpensLeft
     bool bOpensRight;
@@ -138,23 +142,38 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
         // the current fragment information
         return false;
     }
+    //track whether incorporating the alignment changes the fragment
+    bool bChange = false;
     //Update information with the added alignment
-    this->bSplit |= isClip;
+    if(!this->bSplit & isClip){
+        this->bSplit |= isClip;
+        bChange = true;
+    }
+    //If adding another read doesn't otherwise change the fragment
+    // it doesn't need to be carried along
     set_bit(flag,isR1 ? FROM_R1 : FROM_R2);
-    if(off < this->off[ivIdx]){ //Extend to the left
-        this->off[ivIdx] = off;
+    if(off <= this->off[ivIdx]){ //Extend to the left / check for terminality
+        if(off < this->off[ivIdx]) {
+            this->off[ivIdx] = off;
+            bChange = true;
+        }
         if(!(flag & OPENS_LEFT) && !bDistalNotTerminal) {
             set_bit(flag, DISTAL_IS_TERMINAL);
+            bChange = true;
         }
     }
-    if(end > this->end[ivIdx]){ //Extend to the right
-        this->end[ivIdx] = end;
+    if(end >= this->end[ivIdx]){ //Extend to the right / check for terminality
+        if(end >= this->end[ivIdx]){
+            this->end[ivIdx] = end;
+            bChange = true;
+        }
         if((flag & OPENS_LEFT) && !bDistalNotTerminal) {
             set_bit(flag, DISTAL_IS_TERMINAL);
+            bChange = true;
         }
     }
     //std::cerr << "\tTerm Add\n";
-    return true;
+    return bChange;
 }
 
 std::string ChimericFragment_t::to_bedpe(bool bEmptyIncomplete) const {
