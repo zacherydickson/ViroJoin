@@ -5,6 +5,7 @@
 #include <htslib/sam.h>
 #include "sam_utils.h"
 #include <stdexcept>
+#include <bitset>
 
 //Structure for building and tracking potentially chimeric fragments
 //Considered complete if distal ends of the fragment correspond to read termini
@@ -19,12 +20,16 @@ struct ChimericFragment_t {
     };
     enum INFOFLAGBIT {
         OPENS_LEFT = 0x1,
-        DISTAL_IS_TERMINAL = 0x2,
+        IS_SPLIT = 0x2,
         HAS_INTERVAL = 0x4,
-        FROM_R1 = 0x8,
-        FROM_R2 = 0x10,
+        DISTAL_IS_TERMINAL = 0x8,
+        PROXIMAL_IS_TERMINAL = 0x10,
+        FROM_R1 = 0x20,
+        FROM_R2 = 0x40,
     };
-    static const size_t MATE_SHIFT = 3;
+    static const size_t MATE_SHIFT = 5;
+    static const size_t TERMINAL_SHIFT = 3;
+    static const size_t FLAG_BITS = 7;
     //static const size_t IV1 = 0;
     //static const size_t IV2 = 1;
     //Members
@@ -38,16 +43,16 @@ struct ChimericFragment_t {
     //std::array<std::string,2> cigar;
     //std::array<bool,2> bDistalIsTerminal;
     //std::array<bool,2> bHasInterval;
-    bool bSplit;
+    //bool bSplit;
     //Con-/Destruction
     public:
     ChimericFragment_t(const std::string name = "") :
         name(name),
-        chr({"",""}), off({0,0}), end({0,0}), flag({0,0}),
+        chr({"",""}), off({0,0}), end({0,0}), flag({0,0})
         //bOpensLeft({false,false}),
         //cigar({"",""}), bDistalIsTerminal({false,false}),
         //bHasInterval({false,false}),
-        bSplit(false)
+        //bSplit(false)
     {}
     //Accessors
     protected:
@@ -59,13 +64,15 @@ struct ChimericFragment_t {
     }
     bool neither(INFOFLAGBIT bit) const {
         return !((flag[IV1] & bit) || (flag[IV2] & bit));
-    } public:
+    }
+    public:
     bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
     bool is_chimeric() const { return this->both(HAS_INTERVAL); }
+    bool not_chimeric() const;
     //bool is_chimeric() const {
     //    return this->bHost[IV1] != this->bHost[IV2];
     //}
-    bool is_split() const { return this->bSplit; }
+    bool is_split(IV_IDX ivIdx) const { return this->flag[ivIdx] & IS_SPLIT; }
     
     //std::string get_cigar(bool bUp) const { return this->cigar[bUp]; }
     //Mutators
@@ -81,7 +88,8 @@ struct ChimericFragment_t {
     bool add_alignment( const CXA & aln, bool isClip,
                         bool isLeft, bool isR1,
                         ChimericFragment_t::IV_IDX ivIdx);
-    std::string to_bedpe(bool bEmptyIncomplete = false) const ;
+    int dominant_comparison (const ChimericFragment_t & other);
+    std::string to_bedpe(bool bitflag = false) const ;
 };
 
 //Output - true if the alignment was successfully added, false otherwise
@@ -114,39 +122,68 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
         clipSide |= (isLeft) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
     }
     //Named to avoid confusion with member variable
+    //FIXME: terminalSide isn't working as intended
+    CXA::CLIP_SIDE terminalSide = (aln.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
     CXA::CLIP_SIDE distalSide = bOpensRight ? CXA::LEFT_CLIPPED : CXA::RIGHT_CLIPPED;
-    bool bDistalNotTerminal = clipSide & distalSide;
+    bool bDistalNotTerminal = (terminalSide != distalSide) || (clipSide & distalSide);
     //std::cerr << "\t" << this->to_bedpe() << "\n";
+    if(name != "New"){
+        ChimericFragment_t tmp("New");
+        tmp.add_alignment(aln,isClip,isLeft,isR1,ivIdx);
+        std::cerr << "\t" << tmp.to_bedpe(true) << "\n";
+    }
     //std::cerr << "\t" << aln.chr << "\t" << "\t" << off << "-" << end << "\t" << aln.bRev << "\t" << bOpensRight << "\t" << isClip << "\t" << isLeft << "\t" << isR1 << "\t" << ivIdx <<"\t" << int(clipSide) << "\t"  << bDistalNotTerminal <<"\n";
     //std::cerr << "\t*" << this->chr[ivIdx] << "*\t*" << (flag & OPENS_LEFT) << "*\n";
     if(!(flag & HAS_INTERVAL)){
-        //std::cerr << "\tnostream\n";
+        if(name != "New") std::cerr << "\tNEW\n";
         //First alignment on this side, take it as is
         this->chr[ivIdx] = aln.chr;
         if(!bOpensRight) { set_bit(flag,OPENS_LEFT); }
         this->off[ivIdx] = off;
         this->end[ivIdx] = end;
         set_bit(flag,isR1 ? FROM_R1 : FROM_R2);
-        //If this alignment is a clip, then the fragment has a slip read
+        //If this alignment is a clip, then the fragment has a split read
         //Otherwise no update
-        this->bSplit |= isClip;
+        if(isClip) {set_bit(flag, IS_SPLIT); }
         set_bit(flag,HAS_INTERVAL);
         if(!bDistalNotTerminal) {set_bit(flag,DISTAL_IS_TERMINAL); }
         return true;
     }
+    std::cerr << "\tUPDATE";
     //There is something on this side already
-    if( (aln.chr != this->chr[ivIdx]) || 
-        (bOpensRight == bool(flag & OPENS_LEFT)) )
-    {
-        //The alignment is inconsistent with the breakpoint implied by
-        // the current fragment information
-        return false;
+    if(aln.chr != this->chr[ivIdx]) {
+        std::cerr << "\tDIFF Contig\n";
+        return false; //This alignment is completely inconsistent
     }
-    //track whether incorporating the alignment changes the fragment
     bool bChange = false;
+    bool bProperPair = false;
+    //Check if the new alignment disagrees on the direction of the breakpoint
+    if(bOpensRight == bool(flag & OPENS_LEFT)) {
+        std::cerr << "\tConflicting BP side";
+        //Check if the new alignment forms a discordant pair
+        if( (bOpensRight && (end >= this->end[ivIdx])) || //New says open right and is right
+            (!bOpensRight && (off <= this->off[ivIdx])) ) //New says open left and is left
+        { 
+            std::cerr << "\tDiscordant\n";
+            //TODO: Account for clipping (the aligned ends of the old might be mapped in the new)
+            return false;
+        }
+        std::cerr << "\tConcordant";
+        //The new alignment is concordant
+        bProperPair = true;
+        //The distal end of this alignment is considered proximal by the existing fragment
+        //If the distal end is terminal, then the fragment's proximal end is terminal
+        //Indicating a non-chimeric fragment
+        if(!bDistalNotTerminal && !(flag & PROXIMAL_IS_TERMINAL)){
+            set_bit(flag,PROXIMAL_IS_TERMINAL);
+            bChange = true;
+        }
+    }
+    std::cerr << "\tAdding\n";
+    //track whether incorporating the alignment changes the fragment
     //Update information with the added alignment
-    if(!this->bSplit & isClip){
-        this->bSplit |= isClip;
+    if(!(flag & IS_SPLIT) & isClip){
+        set_bit(flag, IS_SPLIT);
         bChange = true;
     }
     //If adding another read doesn't otherwise change the fragment
@@ -157,9 +194,11 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
             this->off[ivIdx] = off;
             bChange = true;
         }
-        if(!(flag & OPENS_LEFT) && !bDistalNotTerminal) {
-            set_bit(flag, DISTAL_IS_TERMINAL);
-            bChange = true;
+        if(!bProperPair){//proper paired alignments can't inform on the distal end
+            if(!(flag & OPENS_LEFT) && !bDistalNotTerminal) {
+                set_bit(flag, DISTAL_IS_TERMINAL);
+                bChange = true;
+            }
         }
     }
     if(end >= this->end[ivIdx]){ //Extend to the right / check for terminality
@@ -167,21 +206,48 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
             this->end[ivIdx] = end;
             bChange = true;
         }
-        if((flag & OPENS_LEFT) && !bDistalNotTerminal) {
-            set_bit(flag, DISTAL_IS_TERMINAL);
-            bChange = true;
+        if(!bProperPair){ //proper paired alignments can't inform on the distal end
+            if((flag & OPENS_LEFT) && !bDistalNotTerminal) {
+                set_bit(flag, DISTAL_IS_TERMINAL);
+                bChange = true;
+            }
         }
     }
     //std::cerr << "\tTerm Add\n";
     return bChange;
 }
 
-std::string ChimericFragment_t::to_bedpe(bool bEmptyIncomplete) const {
-    std::string line("");
-    //Empty bedpe entry for incomplete fragments
-    if(bEmptyIncomplete && !this->is_complete()){
-        return line;
+
+//Determine if a fragment is strictly better than another
+//  If two fragments have the same configuration, and the same distal positions,
+//  the fragment with the more proximal positions (up to being split) is dominant
+//  Given a tie, the fragment with more sources is better
+//Inputs - A chimericFragment to which to compare
+//Output -  -1 if this fragment is dominated by the other
+//          0 if incomparable or neither dominates
+//          1 if this fragment dominates the other
+int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) {
+    //TODO: Implement
+    return 0;
+}
+
+bool ChimericFragment_t::not_chimeric() const {
+    for(IV_IDX ivIdx : {IV1 , IV2}) {
+        std::cerr << bool(flag[ivIdx] & (HAS_INTERVAL)) << "\t"  << bool(flag[ivIdx] & (PROXIMAL_IS_TERMINAL)) << "\t" << (flag[ivIdx] & (HAS_INTERVAL | PROXIMAL_IS_TERMINAL)) << "\t" << HAS_INTERVAL << flag[ivIdx] << "\n";
+        //Check if the interval is present and the proximal position is terminal
+        if((flag[ivIdx] & (HAS_INTERVAL | PROXIMAL_IS_TERMINAL)) > HAS_INTERVAL){
+            return true;
+        }
     }
+    return false;
+}
+
+std::string ChimericFragment_t::to_bedpe(bool bitflag) const {
+    std::string line("");
+    ////Empty bedpe entry for incomplete fragments
+    //if(bEmptyIncomplete && !this->is_complete()){
+    //    return line;
+    //}
     for(size_t ivIdx : {IV1, IV2}) {
         if(!(flag[ivIdx] & HAS_INTERVAL)){
             line += ".\t.\t.\t";
@@ -190,24 +256,23 @@ std::string ChimericFragment_t::to_bedpe(bool bEmptyIncomplete) const {
         line += chr[ivIdx] + "\t" + std::to_string(off[ivIdx]) + "\t" +
                 std::to_string(end[ivIdx]) + "\t";
     }
-    line += name + "\t" + ((bSplit) ? "1" : "0") + "\t";
+    line += name + "\t";
+    uint32_t comboFlag = (flag[IV1] << (FLAG_BITS + 1)) | flag[IV2];
+    line += std::to_string(comboFlag) + "\t";
+    //line += std::to_string(comboFlag) + ":" +std::to_string(flag[IV1]) + "," + std::to_string(flag[IV2]) + "\t";
     for(size_t ivIdx : {IV1, IV2}) {
-        if(!(flag[ivIdx] & HAS_INTERVAL)){
-            line += ".\t";
-            continue;
+        std::string strand = ".";
+        if((flag[ivIdx] & HAS_INTERVAL)){
+            strand = bool(flag[ivIdx] & OPENS_LEFT) ? "-" : "+";
         }
-        line += bool(flag[ivIdx] & OPENS_LEFT) ? "-" : "+";
-        line += "\t";
-    }
-    for(size_t ivIdx : {IV1, IV2}) {
-        if(!(flag[ivIdx] & HAS_INTERVAL)){
-            line += ".\t";
-            continue;
-        }
-        line += std::to_string((flag[ivIdx] & (FROM_R1 | FROM_R2)) >> MATE_SHIFT);
-        if(ivIdx != IV2) {
+        line += strand;
+        if(ivIdx != IV2){
             line += "\t";
         }
+    }
+    if(bitflag){
+        line += "\t" + std::bitset<FLAG_BITS>(flag[IV1]).to_string() + "." +
+                std::bitset<FLAG_BITS>(flag[IV2]).to_string();
     }
     return line;
 }

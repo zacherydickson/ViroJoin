@@ -15,6 +15,9 @@
 #include "config.h"
 #include <cptl_stl.h>
 #include "utils.h"
+#include <mutex>
+
+std::mutex mu;
 
 //enum JunctionSide_t {JS_HOST, JS_VIRUS};
 //enum GoodClipType_t {
@@ -196,6 +199,7 @@ int main(int argc, char* argv[]) {
         //}
         //DestroyAlnVector(alnVecPtr);
         //std::cout << "END BLOCK\n";
+        return 1;
     }
     close_samFile(alnFile);
     bam_destroy1(read_buf);
@@ -440,24 +444,31 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
         flagVec.push_back(0);
 	std::string cname = sam_hdr_tid2name(header,aln->core.tid);
         ParseAlnID(aln,qName,flagVec.back());
+        //if(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1") {
+        //    std::cerr << cname << "\t" << aln->core.flag << "\t" << aln->core.pos << "\n";
+        //}
         if(!(flagVec.back() & 0x1) && aln->core.flag & BAM_FREAD1) {
             flagVec.back() |= 0x4;
         }
         ParseReadXA(aln,cname,alnMappings.back());
         //std::cerr << alnMappings.back().size() << "\t";
     }
-    //std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
+    bool bLog = true;//(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1");
+    if(bLog) std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
     //Construct all fragments which are consistent with the alignments
     std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t(qName)};
 //    fragmentVec[0].name = qName;
     std::vector<ChimericFragment_t> fragmentVecTmp;
-    //std::cerr << "Pre Build Fragments\n";
+    if(bLog) std::cerr << "Pre Build Fragments\n";
     for(size_t i = 0; i < alnMappings.size(); i++){
         const std::vector<CXA> & partMappings = alnMappings[i];
         const uint8_t & flag = flagVec[i];
         while(!fragmentVec.empty()){
             ChimericFragment_t & parentFrag = fragmentVec.back();
+            //bool bMod = false;
+            int part = 0;
             for( const CXA & cxa : partMappings){
+                part++;
                 bool isViral = VirusNameSet.count(cxa.chr);
                 uint8_t clipSide = cxa.clipSide();
                 if(flag & 0x1){ // If the alignment is from a clip
@@ -478,7 +489,6 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
                 for( CXA::CLIP_SIDE side : 
                         {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
                 {
-                    ChimericFragment_t frag = parentFrag;
                     //Skip attempt UNCLIPPED if the alignment is a clip!
                     if((side == CXA::UNCLIPPED) && (flag & 0x1)) { continue; }
                     //Skip left clip if the alignment isn't left clipped
@@ -487,27 +497,39 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
                     if((side == CXA::RIGHT_CLIPPED) && !(clipSide & CXA::RIGHT_CLIPPED)) { continue; }
                     //Attempt to add the alignment interpretting it with the 
                     //  current clip status and direction
+                    if (bLog) std::cerr << "Attempt Add Entry " << i << " Part " << part << " Side " << side << "\n";
+                    ChimericFragment_t frag = parentFrag;
+                    if(bLog) std::cerr << fragmentVecTmp.size() << ": PRE\t" <<frag.to_bedpe(true) << "\n";
                     if(frag.add_alignment(  cxa, side != CXA::UNCLIPPED ,
                                             side == CXA::RIGHT_CLIPPED,
                                             flag & 0x4, ivIdx))
                     {
                         fragmentVecTmp.push_back(frag);
-                    }// else {
-                    //    std::cerr << "Failure to add\n";
-                    //}
+                        //bMod = true;
+                    }
+                    else {
+                        if(bLog) std::cerr << "Failure to add\n";
+                    }
+                    if(bLog) std::cerr << fragmentVecTmp.size() << ": POST\t" << frag.to_bedpe(true) << "\n";
                 }
             }
+            //Retain the parent if no alignments could be added
+            //if(!bMod){
+            //Retain the parent so that fragments which don't require all alignments can be considered
+                fragmentVecTmp.push_back(parentFrag);
+            //}
             fragmentVec.pop_back();
         }
         std::swap(fragmentVec,fragmentVecTmp);
     }
-    //std::cerr << fragmentVec.size() << "\n";
+    if(bLog) std::cerr << fragmentVec.size() << "\n";
     bool bValid = true;
     //Perform check that
     //all fragments are chimeric
     for(const ChimericFragment_t & frag : fragmentVec ){
-        //std::cerr << "TEST\n" << frag.to_bedpe() << "\n";
-        if(!frag.is_chimeric()){
+        if(bLog) std::cerr << "TEST\n" << frag.to_bedpe(true) << "\n";
+        if(frag.not_chimeric()){
+            if(bLog) std::cerr << "FAILURE\n";
             bValid = false;
             break;
         }
@@ -516,17 +538,20 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
         //Only output complete fragments
         std::unordered_set<std::string> knownFragments;
         for(const ChimericFragment_t & frag : fragmentVec ){
+            //std::cerr << "PARTIAL\t"<< frag.to_bedpe(true) << "\n";
             if(!frag.is_complete()) { continue; }
             std::string bedpeStr = frag.to_bedpe();
             auto pair = knownFragments.insert(bedpeStr);
             if(pair.second){
-                //std::cerr << frag.to_bedpe() << "\n";
+                std::cerr << "FINAL\t"<< frag.to_bedpe(true) << "\n";
+                mu.lock();
                 outbed << bedpeStr << "\n";
+                mu.unlock();
             }
         }
     }
     DestroyAlnVector(alnVecPtr);
-    //std::cerr << "Terminate Proc Aln\n";
+    if(bLog) std::cerr << "Terminate Proc Aln\n";
 }
 
 //void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
@@ -730,7 +755,7 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
 //The caller is responsible for detroying and freeing all bam1_t objects in the
 //  vector
 //Inputs - an open_samFile_t pointer to a valid open bam file
-//       - a valid bam1_t object to act as a lookahed buffer
+//       - a valid bam1_t object to act as a lookahead buffer
 //Output - an AlnVector_pt object, null in the case of an empty vector
 //Exceptions - 
 AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf) {
