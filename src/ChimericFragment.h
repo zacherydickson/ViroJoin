@@ -85,8 +85,8 @@ struct ChimericFragment_t {
     }
     //Methods
     public:
-    bool add_alignment( const CXA & aln, bool isClip,
-                        bool isLeft, bool isR1,
+    bool add_alignment( const CXA & aln, bool isClip, bool isAnchor,
+                        bool isLeft, bool isR1, uint8_t clipSide,
                         ChimericFragment_t::IV_IDX ivIdx);
     int dominant_comparison (const ChimericFragment_t & other);
     std::string to_bedpe(bool bitflag = false) const ;
@@ -95,8 +95,8 @@ struct ChimericFragment_t {
 //Output - true if the alignment was successfully added, false otherwise
 //          an alignment fails to be added if a fragment cannot be generated
 //          which is consistent with the existing fragment and the alignment
-bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
-                                        bool isLeft, bool isR1,
+bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnchor,
+                                        bool isLeft, bool isR1, uint8_t clipSide,
                                         ChimericFragment_t::IV_IDX ivIdx) 
 {
     //std::cerr << "\tInit Add\n";
@@ -109,27 +109,39 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
     //end should be exclusive 0 indexed (i.e inclusive 1 indexed)
     size_t off = (aln.pos > 0) ? (aln.pos) : 0;
     size_t end = (aln.endpos());
-    //OpensRight to avoid confusion with member variable OpensLeft
+    //Gt information on where the breakpoint is relative to the alignment
     bool bOpensRight;
-    if(isClip){
+    if(isClip || isAnchor){
         bOpensRight = isLeft; 
+        if(isClip && aln.bRev) {
+            bOpensRight = !bOpensRight;
+        }
     } else {
         bOpensRight = (aln.bRev) ? false : true;
     }
-    //Get the information on whehter the terminal bases of the read are mapped
-    uint8_t clipSide = aln.clipSide();
-    if(isClip){
-        clipSide |= (isLeft) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+    ////Get the information on whehter the terminal bases of the read are mapped
+    //uint8_t clipSide = aln.clipSide();
+    //if(isClip || isAnchor){
+    //    CXA::CLIP_SIDE tmpClipSide = (isLeft) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+    //    if(isClip && aln.bRev){
+    //        tmpClipSide = (!isLeft) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+    //    }
+    //    clipSide |= tmpClipSide;
+    //}
+    CXA::CLIP_SIDE terminalSide;
+    if(isClip){ //
+        terminalSide = (bOpensRight) ? CXA::LEFT_CLIPPED : CXA::RIGHT_CLIPPED;
+    } else {
+        terminalSide = (aln.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
     }
-    //Named to avoid confusion with member variable
-    //FIXME: terminalSide isn't working as intended
-    CXA::CLIP_SIDE terminalSide = (aln.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
     CXA::CLIP_SIDE distalSide = bOpensRight ? CXA::LEFT_CLIPPED : CXA::RIGHT_CLIPPED;
+    std::cerr << "bRev: " << aln.bRev << "\tisClip:" << isClip << "\tisAnchor: "<< isAnchor << "\tisLeft: " << isLeft << "\tTerm:" << ((terminalSide == CXA::LEFT_CLIPPED) ? "L" : "R") << "\tDist:" << ((distalSide == CXA::LEFT_CLIPPED) ? "L" : "R") << "\t" << ((clipSide == CXA::UNCLIPPED) ? "Unclipped" : ( (clipSide == CXA::DOUBLE_CLIPPED) ? "Double Clipped" : ((clipSide == CXA::LEFT_CLIPPED) ? "Left Clipped" : "Right Clipped"))) << "\n";
+    //Named in a prior state to minimize confusion :P
     bool bDistalNotTerminal = (terminalSide != distalSide) || (clipSide & distalSide);
     //std::cerr << "\t" << this->to_bedpe() << "\n";
     if(name != "New"){
         ChimericFragment_t tmp("New");
-        tmp.add_alignment(aln,isClip,isLeft,isR1,ivIdx);
+        tmp.add_alignment(aln,isClip,isAnchor,isLeft,isR1,clipSide,ivIdx);
         std::cerr << "\t" << tmp.to_bedpe(true) << "\n";
     }
     //std::cerr << "\t" << aln.chr << "\t" << "\t" << off << "-" << end << "\t" << aln.bRev << "\t" << bOpensRight << "\t" << isClip << "\t" << isLeft << "\t" << isR1 << "\t" << ivIdx <<"\t" << int(clipSide) << "\t"  << bDistalNotTerminal <<"\n";
@@ -144,7 +156,7 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
         set_bit(flag,isR1 ? FROM_R1 : FROM_R2);
         //If this alignment is a clip, then the fragment has a split read
         //Otherwise no update
-        if(isClip) {set_bit(flag, IS_SPLIT); }
+        if(isClip || isAnchor) {set_bit(flag, IS_SPLIT); }
         set_bit(flag,HAS_INTERVAL);
         if(!bDistalNotTerminal) {set_bit(flag,DISTAL_IS_TERMINAL); }
         return true;
@@ -161,8 +173,8 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
     if(bOpensRight == bool(flag & OPENS_LEFT)) {
         std::cerr << "\tConflicting BP side";
         //Check if the new alignment forms a discordant pair
-        if( (bOpensRight && (end >= this->end[ivIdx])) || //New says open right and is right
-            (!bOpensRight && (off <= this->off[ivIdx])) ) //New says open left and is left
+        if( (bOpensRight && (end > this->end[ivIdx])) || //New says open right and is right
+            (!bOpensRight && (off < this->off[ivIdx])) ) //New says open left and is left
         { 
             std::cerr << "\tDiscordant\n";
             //TODO: Account for clipping (the aligned ends of the old might be mapped in the new)
@@ -182,7 +194,7 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip,
     std::cerr << "\tAdding\n";
     //track whether incorporating the alignment changes the fragment
     //Update information with the added alignment
-    if(!(flag & IS_SPLIT) & isClip){
+    if(!(flag & IS_SPLIT) & (isClip || isAnchor)){
         set_bit(flag, IS_SPLIT);
         bChange = true;
     }
@@ -234,8 +246,10 @@ int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) {
 bool ChimericFragment_t::not_chimeric() const {
     for(IV_IDX ivIdx : {IV1 , IV2}) {
         std::cerr << bool(flag[ivIdx] & (HAS_INTERVAL)) << "\t"  << bool(flag[ivIdx] & (PROXIMAL_IS_TERMINAL)) << "\t" << (flag[ivIdx] & (HAS_INTERVAL | PROXIMAL_IS_TERMINAL)) << "\t" << HAS_INTERVAL << flag[ivIdx] << "\n";
-        //Check if the interval is present and the proximal position is terminal
-        if((flag[ivIdx] & (HAS_INTERVAL | PROXIMAL_IS_TERMINAL)) > HAS_INTERVAL){
+        //Check if the interval is present and botht he proximal and distal positions are terminal
+        //I.e. the implied fragment doesn't span a breakpoint
+        uint16_t mask = (HAS_INTERVAL | PROXIMAL_IS_TERMINAL | DISTAL_IS_TERMINAL);
+        if((flag[ivIdx] & mask)  == mask){
             return true;
         }
     }

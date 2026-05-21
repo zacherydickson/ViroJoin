@@ -187,7 +187,9 @@ int main(int argc, char* argv[]) {
 
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
+    int counter =0;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
+        if(counter++ == 0)
         //std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
         ProcessAlnVec(outbed,alnFile->header,std::move(alnVecPtr));
         ////TODO: Process Aln Vec
@@ -199,7 +201,6 @@ int main(int argc, char* argv[]) {
         //}
         //DestroyAlnVector(alnVecPtr);
         //std::cout << "END BLOCK\n";
-        return 1;
     }
     close_samFile(alnFile);
     bam_destroy1(read_buf);
@@ -474,7 +475,13 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
                 if(flag & 0x1){ // If the alignment is from a clip
                     //If left clip, then the right is clipped away
                     //Otherwise the left is clipped away
-                    clipSide |= (flag & 0x2) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+                    //This flips if the clip maps to the reverse strand
+                    //1Left 0+ = Right 
+                    //0Right 0+ = Left
+                    //1Left 1- = Left
+                    //0Right 1- = Right
+                    //Boils down to whehter they match or not
+                    clipSide |= (bool(flag & 0x2) != cxa.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
                 }
                 //We are setting the host side as interval 1 by convention,
                 //as a result, any molecules which do not have both intervals
@@ -483,9 +490,9 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
                                                     ChimericFragment_t::IV2 :
                                                     ChimericFragment_t::IV1;
                 //Attempt addition of the alignment assuming it is:
-                //  unclipped - unless it is already known to be clipped
                 //  left-clipped - unless there are no left clipped bases
                 //  right-clipped - unless there are no right clipped bases
+                //  unclipped - unless it is already known to be clipped
                 for( CXA::CLIP_SIDE side : 
                         {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
                 {
@@ -500,9 +507,10 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
                     if (bLog) std::cerr << "Attempt Add Entry " << i << " Part " << part << " Side " << side << "\n";
                     ChimericFragment_t frag = parentFrag;
                     if(bLog) std::cerr << fragmentVecTmp.size() << ": PRE\t" <<frag.to_bedpe(true) << "\n";
-                    if(frag.add_alignment(  cxa, side != CXA::UNCLIPPED ,
+                    if(frag.add_alignment(  cxa, (flag & 0x1),
+                                            (side != CXA::UNCLIPPED) && !(flag & 0x1),
                                             side == CXA::RIGHT_CLIPPED,
-                                            flag & 0x4, ivIdx))
+                                            flag & 0x4, clipSide, ivIdx))
                     {
                         fragmentVecTmp.push_back(frag);
                         //bMod = true;
