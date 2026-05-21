@@ -158,6 +158,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //The strand columns inform the breakpoint configuration
 //      + = off is distal, end is proximal
 //      - = off is proximal, end is distal
+//      These are reversed for IV2
 //The Mate flag column informs which of the mates contribute to the interval
 //  0 - no mates (only for incomplete, non chimeric entries)
 //  1 - supported by R1
@@ -189,7 +190,7 @@ int main(int argc, char* argv[]) {
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
     int counter =0;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
-        if(counter++ == 0)
+        //if(counter++ == 0)
         //std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
         ProcessAlnVec(outbed,alnFile->header,std::move(alnVecPtr));
         ////TODO: Process Aln Vec
