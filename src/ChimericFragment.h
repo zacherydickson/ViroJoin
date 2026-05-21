@@ -277,7 +277,11 @@ std::string ChimericFragment_t::to_bedpe(bool bitflag) const {
     for(size_t ivIdx : {IV1, IV2}) {
         std::string strand = ".";
         if((flag[ivIdx] & HAS_INTERVAL)){
-            strand = bool(flag[ivIdx] & OPENS_LEFT) ? "-" : "+";
+            //1L 1IV1 -
+            //1L 0IV2 +
+            //0R 1IV1 +
+            //0R 0IV2 -
+            strand = (bool(flag[ivIdx] & OPENS_LEFT) == (ivIdx == IV1)) ? "-" : "+";
         }
         line += strand;
         if(ivIdx != IV2){
