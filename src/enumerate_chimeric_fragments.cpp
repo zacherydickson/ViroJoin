@@ -1,4 +1,5 @@
 #include <iostream>
+#include <list>
 #include <memory>
 #include <vector>
 #include <array>
@@ -141,7 +142,6 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //candidate fragments from the the BWA alignment
 //Output the results in BEDPE format
 //  ([chr,off,end] up and down, name, bSplit, [strand] up and down,
-//      user defined: [Mate flag] up and down
 //Inputs - A path to the viral reference in fasta format
 //	 - A path to the working directory
 //	 - A path to the bam workspace
@@ -153,17 +153,15 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //The name column is id of the read-pair supporting the candidate
 //A read-pair may infer multiple fragments, each of which may support a distinct
 //  breakpoint
-//The score field is used to store whether the known sequence of the fragment
-//  contains the breakpoint: 1 is yes, no means a chimeric read pair
+//The score field is used to store a flag with lots of information
+//  The flag corresponds to a bit vector
+//  It is big endian IV1 bits, a  spacer bit, then IV2 bits
+//  Within interval bits it is little endian See ChimericFragment_t INFOFLAGBIT
+//  Whether the interval directly abutts the breakpoint is in here
 //The strand columns inform the breakpoint configuration
 //      + = off is distal, end is proximal
 //      - = off is proximal, end is distal
 //      These are reversed for IV2
-//The Mate flag column informs which of the mates contribute to the interval
-//  0 - no mates (only for incomplete, non chimeric entries)
-//  1 - supported by R1
-//  2 - supported by R2
-//  3 - supported by both
 int main(int argc, char* argv[]) {
     //##PARSE INPUTS
     std::string virus_names_file = argv[1];
@@ -188,7 +186,7 @@ int main(int argc, char* argv[]) {
 
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
-    int counter =0;
+    //int counter =0;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
         //if(counter++ == 0)
         //std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
@@ -544,19 +542,46 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
         }
     }
     if(bValid){
-        //Only output complete fragments
-        std::unordered_set<std::string> knownFragments;
-        for(const ChimericFragment_t & frag : fragmentVec ){
+        //Collect Complete fragments, and remove fragments which are
+        //dominated by another (same fragment with better coverage/ support)
+        //Process fragments until there are no more, and retain the dominant fragments
+        std::list<ChimericFragment_t> domFragList;
+        for(; fragmentVec.size() > 0; fragmentVec.pop_back()){
+            const ChimericFragment_t & frag = fragmentVec.back();
             //std::cerr << "PARTIAL\t"<< frag.to_bedpe(true) << "\n";
+            //Skip incomplete fragments
             if(!frag.is_complete()) { continue; }
-            std::string bedpeStr = frag.to_bedpe();
-            auto pair = knownFragments.insert(bedpeStr);
-            if(pair.second){
-                std::cerr << "FINAL\t"<< frag.to_bedpe(true) << "\n";
-                mu.lock();
-                outbed << bedpeStr << "\n";
-                mu.unlock();
+            bool bDominated = false;
+            //Check if this complete fragment is dominated by any previous
+            for(auto it = domFragList.begin();
+                    !bDominated && it != domFragList.end(); )
+            {
+                int cmp = it->dominant_comparison(frag);
+                if(cmp == 1){ //The previous fragment dominates this fragment
+                    bDominated = true;
+                } else if(cmp == -1) {//This fragment dominates the previous,
+                    //Remove the dominated fragment
+                    it = domFragList.erase(it);
+                } else { //No domination
+                    it++;
+                }
             }
+            //Skip dominated fragments
+            if(bDominated) { continue; }
+            domFragList.push_back(frag);
+        }
+        //std::unordered_set<std::string> knownFragments;
+        for( const ChimericFragment_t & frag : domFragList ){
+            std::string bedpeStr = frag.to_bedpe();
+            //auto pair = knownFragments.insert(bedpeStr);
+            //if(pair.second){
+            std::cerr << "FINAL\t"<< frag.to_bedpe(true) << "\n";
+            mu.lock();
+            outbed << bedpeStr << "\n";
+            mu.unlock();
+            //} else {
+            //    std::cerr << "Duplication occured\n";
+            //}
         }
     }
     DestroyAlnVector(alnVecPtr);

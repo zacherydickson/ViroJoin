@@ -12,7 +12,7 @@
 //  are mapped
 //Considered chimeric if the host status of the up and downstream intervals are
 //  not equal
-struct ChimericFragment_t {
+class ChimericFragment_t {
     //Static Members
     public:
     enum IV_IDX {
@@ -65,16 +65,27 @@ struct ChimericFragment_t {
     bool neither(INFOFLAGBIT bit) const {
         return !((flag[IV1] & bit) || (flag[IV2] & bit));
     }
+    size_t n_reads(IV_IDX ivIdx) const {
+        return bool(flag[ivIdx] & FROM_R1) + bool(flag[ivIdx] & FROM_R2);
+    }
+    size_t n_split() const;
     public:
+    size_t distal_pos(IV_IDX ivIdx) const {
+        return (flag[ivIdx] & OPENS_LEFT) ? end[ivIdx] : off[ivIdx] + 1;
+    }
+    std::array<size_t,2> distal_pos() const {
+        return {this->distal_pos(IV1),this->distal_pos(IV2)};
+    }
     bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
     bool is_chimeric() const { return this->both(HAS_INTERVAL); }
-    bool not_chimeric() const;
-    //bool is_chimeric() const {
-    //    return this->bHost[IV1] != this->bHost[IV2];
-    //}
     bool is_split(IV_IDX ivIdx) const { return this->flag[ivIdx] & IS_SPLIT; }
-    
-    //std::string get_cigar(bool bUp) const { return this->cigar[bUp]; }
+    bool not_chimeric() const;
+    size_t proximal_pos(IV_IDX ivIdx) const { 
+        return (flag[ivIdx] & OPENS_LEFT) ? off[ivIdx]+1 : end[ivIdx];
+    }
+    std::array<size_t,2> proximal_pos() const {
+        return {this->proximal_pos(IV1),this->proximal_pos(IV2)};
+    }
     //Mutators
     protected:
     static void set_bit(uint16_t & flag, INFOFLAGBIT bit) {
@@ -88,7 +99,7 @@ struct ChimericFragment_t {
     bool add_alignment( const CXA & aln, bool isClip, bool isAnchor,
                         bool isLeft, bool isR1, uint8_t clipSide,
                         ChimericFragment_t::IV_IDX ivIdx);
-    int dominant_comparison (const ChimericFragment_t & other);
+    int dominant_comparison (const ChimericFragment_t & other) const;
     std::string to_bedpe(bool bitflag = false) const ;
 };
 
@@ -236,11 +247,104 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
 //  Given a tie, the fragment with more sources is better
 //Inputs - A chimericFragment to which to compare
 //Output -  -1 if this fragment is dominated by the other
-//          0 if incomparable or neither dominates
-//          1 if this fragment dominates the other
-int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) {
-    //TODO: Implement
+//          0 if incomparable 
+//          1 if this fragment dominates the other, or the fragments are equal
+//NOTE: If either fragment is not complete (!is_complete) or
+//  not chimeric (not_chimeric), behaviour is undefined
+int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) const 
+{
+    for(IV_IDX ivIdx : {IV1, IV2}){
+        //Chr must match to be compared
+        if(this->chr[ivIdx] != other.chr[ivIdx]){ return 0; }
+        //Distal positions must match to be compared
+        if(this->distal_pos(ivIdx) != other.distal_pos(ivIdx)){ return 0; }
+        //Configurations must be the same to be be compared
+        if( (this->flag[ivIdx] & OPENS_LEFT) !=
+            (other.flag[ivIdx] & OPENS_LEFT) )
+        {
+            return 0;
+        }
+    }
+    size_t nSplits[2] = { this->n_split(), other.n_split() };
+    //The fragments are comparable
+    //If one fragment has more split intervals than the other
+    if(nSplits[0] != nSplits[1]) {
+        //The one with more splits is domininant
+        return (nSplits[0] > nSplits[1]) ? 1 : -1;
+    }
+    //The fragments have the same number of split intervals
+    //If the fragments don't have the same split status on IV1
+    if((this->flag[IV1] & IS_SPLIT) != (other.flag[IV1] & IS_SPLIT)){
+        //then each fragment is split on opposite intervals
+        //These are incomparable
+        return 0;
+        //Note: If a set of alignments can produce both such fragments,
+        //Then it should be able to make the combined fragment which
+        //would dominate both of these
+    }
+    //The two fragments have exactly the same split statuses
+    //Assess whether the proximal positions for split intervals match
+    for(IV_IDX ivIdx : {IV1, IV2}){
+        //Skip unsplit intervals
+        if(!(flag[ivIdx] & IS_SPLIT)) { continue; }
+        //If the proximal positions do not match
+        if(this->proximal_pos(ivIdx) != other.proximal_pos(ivIdx)){
+            //They imply different breakpoints and cannot be compared
+            return 0;
+        }
+    }
+    //Proximal positions on any split intervals match
+    // Assess which fragment has more R1,R2 support on each interval
+    bool OtherHasMoreSupport = !(   (this->n_reads(IV1) + this->n_reads(IV2)) >= 
+                                    (other.n_reads(IV1) + other.n_reads(IV2)) );
+    //If the fragments are both double split
+    if(nSplits[0] == 2){
+        //If this fragment has less support, it is dominated, otherwise it wins
+        return (OtherHasMoreSupport) ?  -1 : 1;
+    }
+    //The two fragments each have at least one unsplit interval
+    //Assess both intervals to see which has proximal positions closer to the junction
+    int betterIV[2] = {0, 0}; //Assuming the two are equal
+    for(IV_IDX ivIdx : {IV1, IV2}){
+        //Skip any split intervals
+        if(flag[ivIdx] & IS_SPLIT) { continue; }
+        //Get Distal-proximal distances
+        int dpDist[2] = { 
+            std::abs(int(this->distal_pos(ivIdx)) - int(this->proximal_pos(ivIdx))), 
+            std::abs(int(other.distal_pos(ivIdx)) - int(other.proximal_pos(ivIdx)))
+        };
+        //If the distances are different
+        if(dpDist[0] != dpDist[1]){
+            //The greater distance is more coverage
+            betterIV[ivIdx] = (dpDist[0] > dpDist[1]) ? 1 : -1;
+        }
+    }
+    // If The better interval is the same for all unsplit intervals
+    if(betterIV[IV1] == betterIV[IV2]){
+        //If a better interval was called
+        if(betterIV[IV1] != 0){
+            //Then the better fragment is found
+            return betterIV[IV1];
+        }
+        //No calls were made
+        return (OtherHasMoreSupport) ?  -1 : 1;
+    }
+    //The two intervals disagree
+    //If at least one interval didn't make a call
+    if(betterIV[IV1] * betterIV[IV2] == 0) {
+        //The dominant IV is the one which was called
+        return (betterIV[IV1] == 0) ? betterIV[IV2] : betterIV[IV1];
+    }
+    //They are incomparable
     return 0;
+}
+
+size_t ChimericFragment_t::n_split() const {
+    size_t n = 0;
+    for(const uint16_t & f : flag){
+        if(f & IS_SPLIT) { n++; }
+    }
+    return n;
 }
 
 bool ChimericFragment_t::not_chimeric() const {
