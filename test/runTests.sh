@@ -8,15 +8,19 @@ NC="\033[0m"
 TestDirBase="testfiles"
 
 IsolateKmerLen=18;
+MinClipLen=20;
 
 
 function main {
     if [ "$#" -lt 2 ]; then
         >&2 echo -e "Usage: $(basename "$0") ReadInfo.tsv workDir [ test1=all ... ]\n" \
-                    "\tReadInfo is tab sep with headers: ReadID, Parity, Length, BPPos, HostLen, and VirusLen\b" \
+                    "\tReadInfo is tab sep with headers: ReadID, Parity, Length, BPPos, HostLen," \
+                    "\t VirusLen, MaxViralNucProp, Config\b" \
                     "\tworkDir is a ViroJoin output directory, some intermediate files may be created at workdir/$TestDirBase\n" \
                     "\tall tests are:\n" \
                     "\t\tisolation - All reads with at least $IsolateKmerLen viral bp are retained\n";
+                    "\t\tmapping - All relevant isolated reads map\n";
+                    "\t\tenumerate_chimeras - All relevant isolated reads map\n";
         exit 1;
     fi
     readInfoFile=$1; shift;
@@ -35,15 +39,25 @@ function main {
     done
     #Perform requested Tests 
     bFail=0;
+    nTests=0;
     if [[ $bAll == 1 || -n "${testSet["isolation"]}" ]]; then
+        ((nTests++));
         RunTest "isolation" "$readInfoFile" "$workingDir" || ((bFail++));
     fi
     if [[ $bAll == 1 || -n "${testSet["mapping"]}" ]]; then
+        ((nTests++));
         RunTest "mapping" "$readInfoFile" "$workingDir" || ((bFail++));
     fi
+    if [[ $bAll == 1 || -n "${testSet["enumerate_chimeras"]}" ]]; then
+        ((nTests++));
+        RunTest "enumerate_chimeras" "$readInfoFile" "$workingDir" || ((bFail++));
+    fi
+    if [ "$nTests" == 0 ]; then
+        >&2 echo -e "[${YELLOW}WARNING${NC}] No implemented tests requested";
+    fi
     #Report the overall result
-    finalRes="${GREEN} All Requested Tests Passed${NC}"
-    [ "$bFail" -gt 0 ] && finalRes="${RED} Some Requested Tests Failed${NC}";
+    finalRes="${GREEN} All Requested Tests Passed${NC} ($nTests/$nTests)"
+    [ "$bFail" -gt 0 ] && finalRes="${RED} Some Requested Tests Failed${NC} ($bFail/$nTests)";
     >&2 echo -e "$finalRes"
 }
 
@@ -105,6 +119,55 @@ function RunTest {
     return "$retVal"
 }
 
+function test_enumerate_chimeras {
+    infoFile=$1; shift
+    workDir=$1; shift
+    testDir=$1; shift
+    mapReadsFile="$testDir/mapped.list"
+    resFile="$workDir/junction-candidates.bedpe"
+    log="$testDir/enumerate_chimeras.log"
+    [ -s "$mapReadsFile" ] ||
+        NoteMappedReads "$workDir" "$mapReadsFile" ||
+        return 1;
+    [ -s "$resFile" ] ||
+        { echo "$resFile is missing or empty"; return 1; }
+    awk -v minClip="$MinClipLen" -v lf="$log" '
+        function failure(msg) {
+            print msg ", see", lf
+            print msg > lf
+            print FNR ": " $0 > lf
+            exit 1;
+        }
+        function warning(msg) {
+            if(!bWarned){
+                print "Warning - " msg ", see", lf
+                bWarned=1;
+            }
+            print msg > lf
+            print FNR ": " $0 > lf
+        }
+        (ARGIND == 1) {
+            config = "H" $9 "V" $10;
+            ObsConfig[$7,config] = 1
+            next;
+        }
+        (ARGIND == 2){ InMapSet[$1]=1; next; }
+        # process read info
+        (FNR == 1){ #header line
+            for(i=1;i<=NF;i++){ colIdx[$i]=i; }
+            next
+        }
+        #Skip reads which did not map
+        { id=$colIdx["ReadID"]; }
+        (!InMapSet[id]) { next; }
+        { config=$colIdx["Config"]; }
+        #Skip reads not expected to support a chimera
+        ($colIdx["VirusLen"] < minClip) { next }
+        (!ObsConfig[id,config]) { failure("Missing Chimera"); }
+    ' "$resFile" "$mapReadsFile" "$infoFile"
+    return 0;
+}
+
 #Ensure that the mapped reads are properly paired,
 #   there are no duplicate read ids, and
 #   that the reads with sufficient viral sequence are retained
@@ -140,13 +203,12 @@ function test_isolation {
     ' "$retReadsFile" "$infoFile" 
 }
 
-#Ensure that 
 function test_mapping {
     infoFile=$1; shift
     workDir=$1; shift
     testDir=$1; shift
     retReadsFile="$testDir/retained.pairs.tab"
-    mapReadsFile="$testDir/mapped.ids.list"
+    mapReadsFile="$testDir/mapped.list"
     log="$testDir/mapping.log"
     [ -s "$retReadsFile" ] ||
         NoteRetainedReads "$workDir" "$retReadsFile" ||
@@ -154,7 +216,7 @@ function test_mapping {
     [ -s "$mapReadsFile" ] ||
         NoteMappedReads "$workDir" "$mapReadsFile" ||
         return 1;
-    awk '
+    awk -v lf="$log" '
         function failure(msg) {
             print msg ", see", lf
             print msg > lf
@@ -163,7 +225,13 @@ function test_mapping {
         }
         (ARGIND == 1){ InMapSet[$1]=1; next; }
         (ARGIND == 2){ InIsoSet[$1]=1; next; }
-        (InIsoSet[$1] && !InMapSet[$1]) { failure("Missing Read"); }
+        # process read info
+        (FNR == 1){ #header line
+            for(i=1;i<=NF;i++){ colIdx[$i]=i; }
+            next
+        }
+        { id = $colIdx["ReadID"]; }
+        (InIsoSet[id] && !InMapSet[id]) { failure("Missing Read"); }
     ' "$mapReadsFile" "$retReadsFile" "$infoFile"
     return 0;
 }
