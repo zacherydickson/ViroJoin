@@ -172,7 +172,7 @@ int main(int argc, char* argv[]) {
     std::string bam_fname = workspace + "/all_alignments.ns.bam";
 
     //##Output file
-    std::string bed_fname = workdir + "/junction-candidates.bed";
+    std::string bed_fname = workdir + "/junction-candidates.bedpe";
     std::ofstream outbed(bed_fname);
     // TODO: Implement the design described above
 
