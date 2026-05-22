@@ -2,6 +2,7 @@
 
 RED="\033[0;31m"
 GREEN="\033[0;32m"
+YELLOW="\033[0;33m"
 NC="\033[0m"
 
 TestDirBase="testfiles"
@@ -20,6 +21,10 @@ function main {
     fi
     readInfoFile=$1; shift;
     workingDir=$1; shift;
+    testDir="$workingDir/$TestDirBase"
+    [ -d "$testDir" ] && 
+        >&2 echo -e "[${YELLOW}WARNING${NC}] $testDir already exists: Test results may not be up to date";
+    mkdir -p "$testDir"
     #Determine the requested tests
     bAll=0;
     [ "$#" -lt 1 ] && bAll=1
@@ -33,18 +38,44 @@ function main {
     if [[ $bAll == 1 || -n "${testSet["isolation"]}" ]]; then
         RunTest "isolation" "$readInfoFile" "$workingDir" || ((bFail++));
     fi
+    if [[ $bAll == 1 || -n "${testSet["mapping"]}" ]]; then
+        RunTest "mapping" "$readInfoFile" "$workingDir" || ((bFail++));
+    fi
     #Report the overall result
     finalRes="${GREEN} All Requested Tests Passed${NC}"
     [ "$bFail" -gt 0 ] && finalRes="${RED} Some Requested Tests Failed${NC}";
     >&2 echo -e "$finalRes"
 }
 
-#Requires testDir to exist
+
+function NoteMappedReads {
+    workDir=$1; shift
+    outFile=$1; shift
+    bam="$workDir/bam_0/all_alignments.ns.bam"
+    [ -s "$bam" ] ||
+        { echo "all_alignments.ns is missing or empty"; return 1; }
+    samtools view "$bam" | 
+        awk '
+            ($1 ~ /_[LR]_[12]/){
+                n=split($1,a,"_");
+                str=a[1];
+                for(i=2;i<=n-2;i++){
+                    str=str"_"a[i]
+                };
+                $1=str
+            }
+            {id=$1}
+            (!Seen[id]++){print id; }
+        ' >| "$outFile"
+}
+
 function NoteRetainedReads {
     workDir=$1; shift
     outFile=$1; shift
     fwd="$workDir/bam_0/retained-pairs_1.fq";
     rev="$workDir/bam_0/retained-pairs_2.fq";
+    [ -s "$fwd" ] && [ -s "$rev" ] || 
+        { echo "retained-pairs_[12].fq missing or empty"; return 1; }
     awk -v rev="$rev" '
         (FNR % 4 != 1){getline < rev; next}
         {
@@ -54,7 +85,6 @@ function NoteRetainedReads {
             print id1"\t"id2;
         } 
     ' "$fwd" >| "$outFile"
-    echo "$outFile"
 }
 
 function RunTest {
@@ -65,22 +95,28 @@ function RunTest {
     mkdir -p "$testDir"
     retVal=1;
     resStr="${RED}FAIL";
-    if msg=" : $("test_${key}" "$infoFile" "$workDir" "$testDir")"; then
+    if msg="$("test_${key}" "$infoFile" "$workDir" "$testDir")"; then
         resStr="${GREEN}PASS"   
         retVal=0;
+    else
+        msg=" : $msg"
     fi
     >&2 echo -e "[$resStr${NC}] ${key}${msg}"
     return "$retVal"
 }
 
-
+#Ensure that the mapped reads are properly paired,
+#   there are no duplicate read ids, and
+#   that the reads with sufficient viral sequence are retained
 function test_isolation {
     infoFile=$1; shift
     workDir=$1; shift
     testDir=$1; shift
     retReadsFile="$testDir/retained.pairs.tab"
     log="$testDir/isolate.log"
-    NoteRetainedReads "$workDir" "$retReadsFile"
+    [ -s "$retReadsFile" ] ||
+        NoteRetainedReads "$workDir" "$retReadsFile" ||
+        return 1;
     awk -v minVL="$IsolateKmerLen" -v lf="$log" '
         function failure(msg) {
             print msg ", see", lf
@@ -104,8 +140,35 @@ function test_isolation {
     ' "$retReadsFile" "$infoFile" 
 }
 
+#Ensure that 
+function test_mapping {
+    infoFile=$1; shift
+    workDir=$1; shift
+    testDir=$1; shift
+    retReadsFile="$testDir/retained.pairs.tab"
+    mapReadsFile="$testDir/mapped.ids.list"
+    log="$testDir/mapping.log"
+    [ -s "$retReadsFile" ] ||
+        NoteRetainedReads "$workDir" "$retReadsFile" ||
+        return 1;
+    [ -s "$mapReadsFile" ] ||
+        NoteMappedReads "$workDir" "$mapReadsFile" ||
+        return 1;
+    awk '
+        function failure(msg) {
+            print msg ", see", lf
+            print msg > lf
+            print FNR ": " $0 > lf
+            exit 1;
+        }
+        (ARGIND == 1){ InMapSet[$1]=1; next; }
+        (ARGIND == 2){ InIsoSet[$1]=1; next; }
+        (InIsoSet[$1] && !InMapSet[$1]) { failure("Missing Read"); }
+    ' "$mapReadsFile" "$retReadsFile" "$infoFile"
+    return 0;
+}
+
 if [ "${BASH_SOURCE[0]}" == "${0}" ]; then
     main "$@"
 fi
 
-#samtools view bam_0/all_alignments.ns.bam | awk '($1 ~ /_[LR]_[12]/){n=split($1,a,"_"); str=a[1]; for(i=2;i<=n-2;i++){str=str"_"a[i]}; $1=str} {id=$1} (!Seen[id]++){print id;}' >| mappedIDs.list
