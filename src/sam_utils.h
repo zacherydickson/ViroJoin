@@ -15,6 +15,17 @@
 
 extern const int MIN_CLIP_LEN;
 
+std::string get_cigar_code(const uint32_t* cigar, int n_cigar) {
+    std::stringstream ss;
+    for (int i = 0; i < n_cigar; i++) {
+        ss << bam_cigar_oplen(cigar[i]) << bam_cigar_opchr(cigar[i]);
+    }
+    return ss.str();
+}
+std::string get_cigar_code(bam1_t* r) {
+    return get_cigar_code(bam_get_cigar(r), r->core.n_cigar);
+}
+
 class CXA {
     public:
         enum CLIP_SIDE {
@@ -42,7 +53,7 @@ class CXA {
 		    this->bRev = (fieldStr.front() == '-');
 		    try{
 			this->pos = std::stoull(fieldStr.substr(1,
-						fieldStr.length()-1));
+						fieldStr.length()-1))-1;
 		    } catch (std::invalid_argument & e){
 			throw std::invalid_argument("Bad XA pos (" +
 						    fieldStr
@@ -92,6 +103,12 @@ class CXA {
                 clipFlag |= (1 << side);
         }
         return clipFlag;
+    }
+    std::string to_string() const {
+        std::string str;
+        str = chr + " " + ((bRev) ? "-" : "+") + std::to_string(pos)  + " " +
+            get_cigar_code(cigar,nCigar) + " " + std::to_string(nm);
+        return str;
     }
 };
 
@@ -164,16 +181,7 @@ bool is_right_clipped(bam1_t* r, bool include_HC = false) {
     return get_right_clip_len(r, include_HC) >= MIN_CLIP_LEN;
 }
 
-std::string get_cigar_code(const uint32_t* cigar, int n_cigar) {
-    std::stringstream ss;
-    for (int i = 0; i < n_cigar; i++) {
-        ss << bam_cigar_oplen(cigar[i]) << bam_cigar_opchr(cigar[i]);
-    }
-    return ss.str();
-}
-std::string get_cigar_code(bam1_t* r) {
-    return get_cigar_code(bam_get_cigar(r), r->core.n_cigar);
-}
+
 
 int get_mate_endpos(bam1_t* r) {
     uint8_t *mcs = bam_aux_get(r, "MC");
