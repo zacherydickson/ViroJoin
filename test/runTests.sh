@@ -18,9 +18,9 @@ function main {
                     "\t VirusLen, MaxViralNucProp, Config\b" \
                     "\tworkDir is a ViroJoin output directory, some intermediate files may be created at workdir/$TestDirBase\n" \
                     "\tall tests are:\n" \
-                    "\t\tisolation - All reads with at least $IsolateKmerLen viral bp are retained\n";
-                    "\t\tmapping - All relevant isolated reads map\n";
-                    "\t\tenumerate_chimeras - All relevant isolated reads map\n";
+                    "\t\tisolation - All reads with at least $IsolateKmerLen viral bp are retained\n" \
+                    "\t\tmapping - All relevant isolated reads map\n" \
+                    "\t\tenumerate_chimeras - All reads at least $MinClipLen viral bp have a junction\n";
         exit 1;
     fi
     readInfoFile=$1; shift;
@@ -140,7 +140,7 @@ function test_enumerate_chimeras {
         }
         function warning(msg) {
             if(!bWarned){
-                print "Warning - " msg ", see", lf
+                print " Warning - " msg ", see", lf
                 bWarned=1;
             }
             print msg > lf
@@ -161,11 +161,23 @@ function test_enumerate_chimeras {
         { id=$colIdx["ReadID"]; }
         (!InMapSet[id]) { next; }
         { config=$colIdx["Config"]; }
-        #Skip reads not expected to support a chimera
-        ($colIdx["VirusLen"] < minClip) { next }
+        #Combine Read Pair Info
+        {
+            hL = $colIdx["HostLen"];
+            vL = $colIdx["VirusLen"];
+            getline;
+            hL = ($colIdx["HostLen"] > hL) ? $colIdx["HostLen"] : hL;
+            vL = ($colIdx["VirusLen"] > vL) ? $colIdx["VirusLen"] : vL;
+        }
+        # Skip reads not expected to support a chimera
+        ((vL < minClip || hL < minClip)) { 
+            # warn if it was observed anyway
+            if(ObsConfig[id,config]) { warning("Extra Chimera"); }
+            next;   
+        }
         (!ObsConfig[id,config]) { failure("Missing Chimera"); }
+
     ' "$resFile" "$mapReadsFile" "$infoFile"
-    return 0;
 }
 
 #Ensure that the mapped reads are properly paired,
