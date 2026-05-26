@@ -177,7 +177,7 @@ void DestroyAlnVector(AlnVector_pt & alnVec);
 void FilterIncompleteFragmentInfo(MateAlnInfoList_t & alnInfoList);
 int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag);
 void ParseReadXA(bam1_t *read, std::string primaryContig,std::vector<CXA> & out);
-void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr);
+void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr);
 AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 
 // ===== MAIN
@@ -220,18 +220,30 @@ int main(int argc, char* argv[]) {
     std::ofstream outbed(bed_fname);
 
     //TODO: Multithreading
-    /*//Set up the thread pool
+    //Set up the thread pool
     int nThread = parse_config_threads(workdir + "/config.txt");
-    ctpl::thread_pool thread_pool(nThread); */
+    ctpl::thread_pool thread_pool(nThread);
 
     //##LOAD DATA INTO GLOBAL VARIABLES
     //Load names of viral contigs
     LoadVirusNames(virus_names_file,VirusNameSet);
 
+
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
+    std::vector<std::future<void>> futureVec;
+    auto header = alnFile->header;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
-        ProcessAlnVec(outbed,alnFile->header,std::move(alnVecPtr));
+        std::future<void> future = thread_pool.push(
+                [ptr = std::move(alnVecPtr), file=&outbed, h=&header ](int id) mutable {
+                    ProcessAlnVec(id, *file,*h,std::move(ptr));
+                }
+        );
+        futureVec.push_back(std::move(future));
+        //TODO: Maybe make it sort its output on its own?
+    }
+    for(auto & future : futureVec){
+        future.get();
     }
     close_samFile(alnFile);
     bam_destroy1(read_buf);
@@ -490,7 +502,7 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 //Inputs - an open output file stream ofstream object
 //       - an AlnVector_pt object to process
 //Output - None, writes to outbed
-void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
+void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
     FragmentInfo_t fragInfo = ConstructFragmentInfo(header, *alnVecPtr);
     std::string qName("");
     uint8_t dummy;
