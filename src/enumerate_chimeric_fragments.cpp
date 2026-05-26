@@ -94,8 +94,149 @@ std::mutex mu;
 //typedef std::unordered_map<std::string, ClipArray_t> GoodClipMap_t;
 //typedef std::unordered_set<std::string> QNameSet_t;
 
+
+class ClippedCXA : public CXA {
+    public:
+        enum FLAG_BITS {
+            IS_CLIPPED = 0x1,
+            IS_LEFT = 0x2,
+            IS_R1 = 0x4,
+            PRIMARY_IS_REVERSED=0x8
+        };
+        uint8_t flag;
+        ClippedCXA(std::string xaStr,uint8_t flag) : CXA(xaStr), flag(flag) {}
+        ClippedCXA(const CXA & other,uint8_t flag) : CXA(other), flag(flag) {}
+        bool is_clipped() const { return flag & IS_CLIPPED; }
+        bool is_left() const { return flag & IS_LEFT; }
+        bool is_r1() const { return flag & IS_R1; }
+        bool primary_is_rev() const { return flag & PRIMARY_IS_REVERSED; }
+        std::string to_string() const {
+            return CXA::to_string() + " " + std::to_string(flag); 
+        }
+};
+
+typedef std::shared_ptr<ClippedCXA> ClippedCXA_spt;
+
+struct MateAlignmentInfo_t {
+    enum ALN_PARTS {
+        UNSPLIT, ANCHOR_LEFT, ANCHOR_RIGHT, CLIP_LEFT, CLIP_RIGHT
+    };
+    static const int NPartTypes = 5;
+    protected:
+    ClippedCXA_spt parts[NPartTypes];
+    public:
+    MateAlignmentInfo_t() {
+        for(int i = 0; i < NPartTypes; i++){
+            parts[i] = nullptr;
+        }
+    }
+    MateAlignmentInfo_t(const MateAlignmentInfo_t & other) {
+        for(int i = 0; i < NPartTypes; i++){
+            this->parts[i] = other.parts[i];
+        }
+    }
+    static bool Part_Is_Anchor(ALN_PARTS partType) {
+        return partType == ANCHOR_LEFT || partType == ANCHOR_RIGHT ;
+    }
+    static bool Part_Is_Clip(ALN_PARTS partType) {
+        return partType == CLIP_LEFT || partType == CLIP_RIGHT;
+    }
+    static bool Part_Is_Left(ALN_PARTS partType) {
+        return partType == ANCHOR_LEFT || partType == CLIP_LEFT;
+    }
+    static bool Part_Is_Right(ALN_PARTS partType) {
+        return partType == ANCHOR_RIGHT || partType == CLIP_RIGHT;
+    }
+    
+    bool add(ClippedCXA_spt part, ALN_PARTS partType) {
+        //Cannot add part if it already exists
+        if(this->parts[partType]) { return false; }
+        if(partType == UNSPLIT) { return do_add(part,partType); }
+        //Part type is split
+        //Cannot add split parts if an unsplit part is already present
+        if(this->parts[UNSPLIT]) { return false; }
+        //Cannot have more than one left part
+        if(this->has_left() && Part_Is_Left(partType)) { return false;}
+        //Cannot have more than one right part
+        if(this->has_right() && Part_Is_Right(partType)) { return false;}
+        if(Part_Is_Anchor(partType)) {
+            //Cannot have more than one anchor
+            if(this->has_anchor()) { return false; }
+            return do_add(part,partType);
+        }
+        //Part is a clip
+        //Cannot have more than one clip
+        if(this->has_clip()) { return false; }
+        return do_add(part,partType);
+    }
+    protected:
+    bool do_add(ClippedCXA_spt part, ALN_PARTS partType) {
+        parts[partType] = part;
+        return true;
+    }
+    public:
+    bool has_anchor () const {
+        return parts[ANCHOR_LEFT] || parts[ANCHOR_RIGHT];
+    }
+    bool has_clip () const {
+        return parts[CLIP_LEFT] || parts[CLIP_RIGHT];
+    }
+    bool has_left() const {
+        return parts[ANCHOR_LEFT] || parts[CLIP_LEFT];
+    }
+    bool has_right() const {
+        return parts[ANCHOR_RIGHT] || parts[CLIP_RIGHT];
+    }
+    bool is_right_anchored() const { return bool(parts[ANCHOR_RIGHT]); }
+    bool is_split () const { return !(parts[UNSPLIT]); }
+    bool is_complete() const {
+        return parts[UNSPLIT] || (this->has_anchor() && this->has_clip());
+    }
+    ClippedCXA_spt get_alignment(ALN_PARTS partType) const {
+        return parts[partType];
+    }
+    ClippedCXA_spt get_anchor() const {
+        return (parts[ANCHOR_LEFT]) ? parts[ANCHOR_LEFT] : parts[ANCHOR_RIGHT];
+    }
+    ClippedCXA_spt get_clip() const {
+        return (parts[CLIP_LEFT]) ? parts[CLIP_LEFT] : parts[CLIP_RIGHT];
+    }
+    std::vector<ClippedCXA_spt> get_alignments() const {
+        std::vector<ClippedCXA_spt> alnVec;
+        if(this->is_split()){
+            alnVec.push_back(
+                (parts[ANCHOR_LEFT]) ? parts[ANCHOR_LEFT] : parts[ANCHOR_RIGHT]
+            );
+            alnVec.push_back(
+                (parts[CLIP_LEFT]) ? parts[CLIP_LEFT] : parts[CLIP_RIGHT]
+            );
+        } else {
+            alnVec.push_back(parts[UNSPLIT]);
+        }
+        return alnVec;
+    }
+    std::string to_string() const {
+        std::string str;
+        for(int i = 0; i < NPartTypes; i++){
+            if(i > 0){ str += "\t"; }
+            str += std::to_string(i) + ") ";
+            str += (parts[i]) ? parts[i]->to_string() : ".";
+        }
+        return str;
+    }
+};
+
+
 typedef std::vector<bam1_t*> AlnVector_t;
 typedef std::unique_ptr<AlnVector_t> AlnVector_pt;
+typedef std::list<MateAlignmentInfo_t> MateAlnInfoList_t;
+typedef std::pair<MateAlnInfoList_t,MateAlnInfoList_t> FragmentInfo_t;
+
+void LogMateAlnInfoList(const MateAlnInfoList_t  & list) {
+    for(const auto & aln : list){
+        std::cerr << aln.to_string() << "\n";
+    }
+}
 
 std::unordered_set<std::string> VirusNameSet;
 //GoodClipMap_t GoodClipMap;
@@ -104,9 +245,16 @@ std::unordered_set<std::string> VirusNameSet;
 
 //===== Function Declarations
 
+void AddClipsToFragmentInfo (   MateAlnInfoList_t & AlnInfoList,
+                                const std::vector<ClippedCXA_spt> & clips );
+bool AddMateAlignmentInfoToFragment(const MateAlignmentInfo_t obj,
+                                    ChimericFragment_t & frag);
+FragmentInfo_t ConstructFragmentInfo( bam_hdr_t* header,
+                                        const AlnVector_t & alnVec);
 //std::string ConstructCandidateString();
 //void DestroyGoodClips();
 void DestroyAlnVector(AlnVector_pt & alnVec);
+void FilterIncompleteFragmentInfo(MateAlnInfoList_t & alnInfoList);
 //char DetermineClipJunctionStrand (uint8_t flag);
 //std::array<char,2> DetermineJunctionOrientation (   bool bViralAnchor,
 //		    bool isLeftClip, bool bAnchorRev, bool bClipRev, bool isR1);
@@ -188,7 +336,7 @@ int main(int argc, char* argv[]) {
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
     //int counter =0;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
-        //if(counter++ == 0)
+        //if(counter++ == 1)
         //std::cout << "BEGIN BLOCK\t" << alnVecPtr->size() << "\n";
         ProcessAlnVec(outbed,alnFile->header,std::move(alnVecPtr));
         ////TODO: Process Aln Vec
@@ -346,10 +494,208 @@ int main(int argc, char* argv[]) {
 //}
 
 
+bool AddMateAlignmentInfoToFragment(const MateAlignmentInfo_t obj,
+                                    ChimericFragment_t & frag)
+{
+    if(!obj.is_complete()) {return false; }
+    std::vector<ClippedCXA_spt> alnVec = obj.get_alignments();
+    ChimericFragment_t::IV_IDX ivIdx;
+    //Check if there is just one alignment
+    if(!obj.is_split()){
+        ClippedCXA_spt aln = obj.get_alignment(MateAlignmentInfo_t::UNSPLIT);
+        ivIdx = (VirusNameSet.count(aln->chr)) ?    ChimericFragment_t::IV2 :
+                                                    ChimericFragment_t::IV1;
+        return frag.add_alignment( *aln,false,false,false,aln->is_r1(),
+                                    aln->clipSide(),ivIdx);
+    }
+    //Alignment is Split
+    //Try to add the anchor
+    ClippedCXA_spt anchor = obj.get_anchor();
+    ivIdx = (VirusNameSet.count(anchor->chr)) ? ChimericFragment_t::IV2 :
+                                                ChimericFragment_t::IV1;
+    bool bAnchorIsRight = obj.is_right_anchored();
+    if(!frag.add_alignment( *anchor,false,true,!bAnchorIsRight,
+                            anchor->is_r1(),anchor->clipSide(),ivIdx))
+    {
+        return false;
+    }
+    //Try to add the clip
+    ClippedCXA_spt clip = obj.get_clip();
+    ivIdx = (VirusNameSet.count(clip->chr)) ? ChimericFragment_t::IV2 :
+                                              ChimericFragment_t::IV1;
+    uint8_t clipSide = clip->clipSide();
+    //0 LA 0 c+ LeftClipped
+    //0 LA 1 c- RightClipped
+    //1 RA 0 c+ RightClipped
+    //1 RA 1 c- LeftCipped
+    clipSide |= (bAnchorIsRight == clip->bRev) ?    CXA::LEFT_CLIPPED :
+                                                    CXA::RIGHT_CLIPPED;
+    return frag.add_alignment(  *clip,true,false,bAnchorIsRight,clip->is_r1(),
+                                clipSide,ivIdx);
+}
+
+
+
+//Given a set of Alignment Information objects, attempt to add clip information
+//to the anchors
+//Process: iterate over alnInfoList, skipping over non-anchors and leaving them
+// as is. Pull the anchor object from the list as a parent object. Try to create 
+// a new object from the parent and each clip. for each on that works insert it
+// back into the list before the item previously following the parent
+//Note: If an anchor does not have any clipps added to it, it is removed
+//          (this probably removes the need for a subsequent filtering step ...)
+//Inputs    - a list of MateAlignmentInfo_t objects
+//          - a vector of shared Clipped CXA pointers to add
+//Output    - None, modifies the given MateAlnInfoList_t Object
+void AddClipsToFragmentInfo (   MateAlnInfoList_t & alnInfoList,
+                                const std::vector<ClippedCXA_spt> & clips )
+{
+    for(auto it = alnInfoList.begin(); it != alnInfoList.end(); ){
+        //Cannot add a clip to an alignment without an anchor
+        if(!it->has_anchor()) { it++; continue; }
+        MateAlignmentInfo_t parentObj(*it);
+        ClippedCXA_spt anchor = parentObj.get_alignments()[0];
+        //Pull the anchor out of the list to build new objects
+        it=alnInfoList.erase(it);
+        //If the primary alignment was reversed, but this alternative alignment 
+        //was not, then the clip sequence corresponds to the other side of the alignment
+        bool bAnchorSwap = (anchor->bRev != anchor->primary_is_rev());
+        for(const ClippedCXA_spt & clip : clips){
+            bool bClipLeft = clip->is_left();
+            MateAlignmentInfo_t obj(parentObj);
+            MateAlignmentInfo_t::ALN_PARTS partType = 
+                (bClipLeft == bAnchorSwap) ?
+                    MateAlignmentInfo_t::CLIP_RIGHT :
+                    MateAlignmentInfo_t::CLIP_LEFT;
+            //std::cerr << "\tAttempt Add As " << partType << "\n" << clip->to_string() << "\n" << "\tto\n" << obj.to_string() << "\n";
+            if(obj.add(clip,partType)){
+                //std::cerr << "\tSuccess\n";
+                alnInfoList.insert(it,obj);
+            }
+            //else { std::cerr << "\tFailure\n"; }
+        }
+    }
+}
+
+FragmentInfo_t ConstructFragmentInfo( bam_hdr_t* header,
+                                        const AlnVector_t & alnVec) {
+    MateAlnInfoList_t R1AlnInfoList;
+    MateAlnInfoList_t R2AlnInfoList;
+
+    std::vector<ClippedCXA_spt> alnMappings;
+    std::vector<ClippedCXA_spt> R1Clips;
+    std::vector<ClippedCXA_spt> R2Clips;
+    std::string qName("");
+    //Load up all alternative alignments
+    for( bam1_t* aln : alnVec){
+        uint8_t flag;
+	std::string cname = sam_hdr_tid2name(header,aln->core.tid);
+        ParseAlnID(aln,qName,flag);
+        //std::cerr << "SAM | " << cname << "\t" << qName << "\t" << aln->core.flag << "\t" << aln->core.pos << "\t" << std::to_string(int(flag)) << "\n";
+        if(!(flag & ClippedCXA::IS_CLIPPED)){
+            if(aln->core.flag & BAM_FREAD1) { flag |= ClippedCXA::IS_R1; }
+            if(aln->core.flag & BAM_FREVERSE) { flag |= ClippedCXA::PRIMARY_IS_REVERSED; }
+        }
+        MateAlnInfoList_t & mateAlnInfoVec =
+            (flag & ClippedCXA::IS_R1) ? R1AlnInfoList : R2AlnInfoList;
+        std::vector<ClippedCXA_spt> & mateClips =
+            (flag & ClippedCXA::IS_R1) ? R1Clips : R2Clips;
+
+        std::vector<CXA> theseAln;
+        ParseReadXA(aln,cname,theseAln);
+
+        //std::cerr << "=== Build CXA\n";
+        for(auto aln : theseAln){
+            ClippedCXA_spt ccxa(new ClippedCXA(aln,flag));
+            //std::cerr << "CCXA | " << ccxa->to_string() << "\n";
+            alnMappings.push_back(ccxa);
+            //If this alignment is from a clip
+            if(ccxa->is_clipped()) {
+                //std::cerr << "\tClipped\n";
+                //Record it for processing after non-clips are processed
+                mateClips.push_back(ccxa);
+                continue;
+            }
+            uint8_t clipSide = ccxa->clipSide();
+            for( CXA::CLIP_SIDE side : 
+                    {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
+            {
+                //Figure out which part of an alignment this CXA represents
+                MateAlignmentInfo_t::ALN_PARTS part; 
+                switch (side) {
+                    case CXA::UNCLIPPED:
+                        //Skip attempt UNCLIPPED if the alignment is a clip!
+                        //if(flag & ClippedCXA::IS_CLIPPED) { continue; }
+                        part = MateAlignmentInfo_t::UNSPLIT;
+                        break;
+                    case CXA::LEFT_CLIPPED:
+                        //Skip left clip if the alignment isn't left clipped
+                        if(!(clipSide & CXA::LEFT_CLIPPED)) { continue; }
+                        part = MateAlignmentInfo_t::ANCHOR_RIGHT;
+                        break;
+                    case CXA::RIGHT_CLIPPED:
+                        //Skip right clip if the alignment isn't right clipped
+                        if(!(clipSide & CXA::RIGHT_CLIPPED)) { continue; }
+                        part = MateAlignmentInfo_t::ANCHOR_LEFT;
+                        break;
+                    case CXA::DOUBLE_CLIPPED:
+                        //Side can't be in this state...
+                        throw std::logic_error("Attempt to interpret alignment as double clipped");
+                        break;
+                }
+                //std::cerr << "\tAttempt Add As " << side << "\n";;
+                //Create the alignment info object and add this alignment
+                mateAlnInfoVec.emplace_back();
+                if(!mateAlnInfoVec.back().add(ccxa,part)){
+                    throw std::logic_error("Failure to add ccxa to empty mate info");
+                }
+                //std::cerr << "MAIV | " << mateAlnInfoVec.back().to_string() << "\n";
+            }
+        }
+        //std::cerr << alnMappings.back().size() << "\t";
+    }
+    //std::cerr << "\n=== Pre-Clip R1 MAIV\n";
+    //LogMateAlnInfoList(R1AlnInfoList);
+    //std::cerr << "\n=== Pre-Clip R2 MAIV\n";
+    //LogMateAlnInfoList(R2AlnInfoList);
+    //Add clips to their respective anchors
+    //std::cerr << "\n=== Add Clips R1\n";
+    AddClipsToFragmentInfo(R1AlnInfoList,R1Clips);
+    //std::cerr << "\n=== Add Clips R2\n";
+    AddClipsToFragmentInfo(R2AlnInfoList,R2Clips);
+    //std::cerr << "\n=== Post-Clip R1 MAIV\n";
+    //LogMateAlnInfoList(R1AlnInfoList);
+    //std::cerr << "\n=== Post-Clip R2 MAIV\n";
+    //LogMateAlnInfoList(R2AlnInfoList);
+    ////Filter out incomplete fragments
+    //std::cerr << "\n=== Filter Fragments R1 \n";
+    //FilterIncompleteFragmentInfo(R1AlnInfoList);
+    //std::cerr << "\n=== Filter Fragments R2 \n";
+    //FilterIncompleteFragmentInfo(R2AlnInfoList);
+    //std::cerr << "\n=== Post-Filter R1 MAIV\n";
+    //LogMateAlnInfoList(R1AlnInfoList);
+    //std::cerr << "\n=== Post-Filter R2 MAIV\n";
+    //LogMateAlnInfoList(R2AlnInfoList);
+    return std::make_pair(R1AlnInfoList,R2AlnInfoList);
+}
+
 //Free the bam1_t objects in an alignment vector
 void DestroyAlnVector(AlnVector_pt & alnVec) {
     for (bam1_t * aln : *alnVec){
         bam_destroy1(aln);
+    }
+}
+
+void FilterIncompleteFragmentInfo(MateAlnInfoList_t & alnInfoList){
+    for(auto it = alnInfoList.begin(); it != alnInfoList.end();){
+        //std::cerr << "\tCheck for completeness\n" << it->to_string() << "\n";
+        if(it->is_complete()){
+            //std::cerr << "\tComplete\n";
+            it++;
+        } else {
+            //std::cerr << "\tIncomplete\n";
+            it = alnInfoList.erase(it);
+        }
     }
 }
 
@@ -380,9 +726,9 @@ int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag){
         if( (side == 'L' || side == 'R') &&
             (read == '1' || read == '2')) 
         { // Is clipped
-            flag |= 0x1; //Set the clip bit
-            if(side == 'L'){ flag |= 0x2; } //Set the left bit
-            if(read == '1'){ flag |= 0x4; } //Set the R1 bit
+            flag |= ClippedCXA::IS_CLIPPED;
+            if(side == 'L'){ flag |= ClippedCXA::IS_LEFT; } //Set the left bit
+            if(read == '1'){ flag |= ClippedCXA::IS_R1; } //Set the R1 bit
         } else {
             qname += "_" + nameParts[nameParts.size() - 2];
             qname += "_" + nameParts[nameParts.size() - 1];
@@ -398,7 +744,7 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 
     std::string xaStr = primaryContig + "," + 
 			((read->core.flag & BAM_FREVERSE) ? "-" : "+")  +
-			std::to_string(read->core.pos) + "," +
+			std::to_string(read->core.pos+1) + "," +
 			"1M" + "," + std::to_string(nmVal);
     out.emplace_back(xaStr);
     out.front().nCigar = read->core.n_cigar;
@@ -419,6 +765,8 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
     }
 }
 
+
+
 //Given a vector of alignments, stitches combinations of alignments into 
 // consistent fragments and outputs them to the provided ofstream
 //Each alignment may have alternative alignments, any of which is considered 
@@ -435,108 +783,136 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 //Output - None, writes to outbed
 void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
     //std::cerr << "Init Proc Aln\n";
-    std::vector<std::vector<CXA>> alnMappings;
+    FragmentInfo_t fragInfo = ConstructFragmentInfo(header, *alnVecPtr);
     std::string qName("");
-    std::vector<uint8_t> flagVec;
-    //Load up all alternative alignments
-    for( bam1_t* & aln : *alnVecPtr){
-        alnMappings.push_back(std::vector<CXA>());
-        flagVec.push_back(0);
-	std::string cname = sam_hdr_tid2name(header,aln->core.tid);
-        ParseAlnID(aln,qName,flagVec.back());
-        //if(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1") {
-        //    std::cerr << cname << "\t" << aln->core.flag << "\t" << aln->core.pos << "\n";
-        //}
-        if(!(flagVec.back() & 0x1) && aln->core.flag & BAM_FREAD1) {
-            flagVec.back() |= 0x4;
+    uint8_t dummy;
+    ParseAlnID((*alnVecPtr)[0],qName,dummy);
+    //Skip fragments which do not have alignments from both the R1 and the R2
+    if(!fragInfo.first.size() || !fragInfo.second.size()) { return; }
+    //Construct ChimericFragments
+    std::vector<ChimericFragment_t> fragmentVec;
+    //Iterate over combinations of R1 and R2 alignment information objects
+    for(const MateAlignmentInfo_t & r1 : fragInfo.first){
+        ChimericFragment_t parentFrag(qName);
+        //std::cerr << "Pre-R1\t" << parentFrag.to_bedpe(true) << "\n";
+        //Skip fragments where the R1 alignments are inconsistent
+        if(!AddMateAlignmentInfoToFragment(r1,parentFrag) ){ /*std::cerr << "failure to add R1\n";*/ continue; }
+        //std::cerr << "Post-R1\t"<< parentFrag.to_bedpe(true) << "\n";
+        for(const MateAlignmentInfo_t & r2 : fragInfo.second){
+            //Make a copy of the parent frag to work with
+            ChimericFragment_t frag(parentFrag);
+            //std::cerr << "Pre-R2\t"<< frag.to_bedpe(true) << "\n";
+            //Skip fragments where R2 alignments are inconsistent
+            if(!AddMateAlignmentInfoToFragment(r2,frag)) {  /*std::cerr << "failure to add R2\n";*/ continue; }
+            //std::cerr << "Post-R2\t"<< frag.to_bedpe(true) << "\n";
+            fragmentVec.push_back(frag);
         }
-        ParseReadXA(aln,cname,alnMappings.back());
-        //std::cerr << alnMappings.back().size() << "\t";
     }
-    bool bLog = true;//(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1");
-    if(bLog) std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
-    //Construct all fragments which are consistent with the alignments
-    std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t(qName)};
-//    fragmentVec[0].name = qName;
-    std::vector<ChimericFragment_t> fragmentVecTmp;
-    if(bLog) std::cerr << "Pre Build Fragments\n";
-    for(size_t i = 0; i < alnMappings.size(); i++){
-        const std::vector<CXA> & partMappings = alnMappings[i];
-        const uint8_t & flag = flagVec[i];
-        while(!fragmentVec.empty()){
-            ChimericFragment_t & parentFrag = fragmentVec.back();
-            //bool bMod = false;
-            int part = 0;
-            for( const CXA & cxa : partMappings){
-                part++;
-                bool isViral = VirusNameSet.count(cxa.chr);
-                uint8_t clipSide = cxa.clipSide();
-                if(flag & 0x1){ // If the alignment is from a clip
-                    //If left clip, then the right is clipped away
-                    //Otherwise the left is clipped away
-                    //This flips if the clip maps to the reverse strand
-                    //1Left 0+ = Right 
-                    //0Right 0+ = Left
-                    //1Left 1- = Left
-                    //0Right 1- = Right
-                    //Boils down to whehter they match or not
-                    clipSide |= (bool(flag & 0x2) != cxa.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
-                }
-                //We are setting the host side as interval 1 by convention,
-                //as a result, any molecules which do not have both intervals
-                //is non chimeric, it will also be incomplete
-                ChimericFragment_t::IV_IDX ivIdx =  (isViral) ?
-                                                    ChimericFragment_t::IV2 :
-                                                    ChimericFragment_t::IV1;
-                //Attempt addition of the alignment assuming it is:
-                //  left-clipped - unless there are no left clipped bases
-                //  right-clipped - unless there are no right clipped bases
-                //  unclipped - unless it is already known to be clipped
-                for( CXA::CLIP_SIDE side : 
-                        {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
-                {
-                    //Skip attempt UNCLIPPED if the alignment is a clip!
-                    if((side == CXA::UNCLIPPED) && (flag & 0x1)) { continue; }
-                    //Skip left clip if the alignment isn't left clipped
-                    if((side == CXA::LEFT_CLIPPED) && !(clipSide & CXA::LEFT_CLIPPED)) { continue; }
-                    //Skip right clip if the alignment isn't right clipped
-                    if((side == CXA::RIGHT_CLIPPED) && !(clipSide & CXA::RIGHT_CLIPPED)) { continue; }
-                    //Attempt to add the alignment interpretting it with the 
-                    //  current clip status and direction
-                    if (bLog) std::cerr << "Attempt Add Entry " << i << " Part " << part << " Side " << side << "\n";
-                    ChimericFragment_t frag = parentFrag;
-                    if(bLog) std::cerr << fragmentVecTmp.size() << ": PRE\t" <<frag.to_bedpe(true) << "\n";
-                    if(frag.add_alignment(  cxa, (flag & 0x1),
-                                            (side != CXA::UNCLIPPED) && !(flag & 0x1),
-                                            side == CXA::RIGHT_CLIPPED,
-                                            flag & 0x4, clipSide, ivIdx))
-                    {
-                        fragmentVecTmp.push_back(frag);
-                        //bMod = true;
-                    }
-                    else {
-                        if(bLog) std::cerr << "Failure to add\n";
-                    }
-                    if(bLog) std::cerr << fragmentVecTmp.size() << ": POST\t" << frag.to_bedpe(true) << "\n";
-                }
-            }
-            //Retain the parent if no alignments could be added
-            //if(!bMod){
-            //Retain the parent so that fragments which don't require all alignments can be considered
-                fragmentVecTmp.push_back(parentFrag);
-            //}
-            fragmentVec.pop_back();
-        }
-        std::swap(fragmentVec,fragmentVecTmp);
-    }
-    if(bLog) std::cerr << fragmentVec.size() << "\n";
+    //std::vector<std::vector<CXA>> alnMappings;
+    //std::string qName("");
+    //std::vector<uint8_t> flagVec;
+    ////Load up all alternative alignments
+    //for( bam1_t* & aln : *alnVecPtr){
+    //    alnMappings.push_back(std::vector<CXA>());
+    //    flagVec.push_back(0);
+    //    std::string cname = sam_hdr_tid2name(header,aln->core.tid);
+    //    ParseAlnID(aln,qName,flagVec.back());
+    //    //if(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1") {
+    //    //    std::cerr << cname << "\t" << aln->core.flag << "\t" << aln->core.pos << "\n";
+    //    //}
+    //    if(!(flagVec.back() & 0x1) && aln->core.flag & BAM_FREAD1) {
+    //        flagVec.back() |= 0x4;
+    //    }
+    //    ParseReadXA(aln,cname,alnMappings.back());
+    //    //std::cerr << alnMappings.back().size() << "\t";
+    //}
+    //bool bLog = true;//(qName == "Fake:H+V-:HChr8:144Mbp:chr11:86Mbp:V:96kbp1");
+    //if(bLog) std::cerr << "\n" << qName << "\t" << alnMappings.size() << "\n";
+    ////Construct all fragments which are consistent with the alignments
+    //std::vector<ChimericFragment_t> fragmentVec = {ChimericFragment_t(qName)};
+    //return;
+    ////TODO: Construct Fragments
+//  //  fragmentVec[0].name = qName;
+    //std::vector<ChimericFragment_t> fragmentVecTmp;
+    //if(bLog) std::cerr << "Pre Build Fragments\n";
+    //for(size_t i = 0; i < alnMappings.size(); i++){
+    //    const std::vector<CXA> & partMappings = alnMappings[i];
+    //    const uint8_t & flag = flagVec[i];
+    //    while(!fragmentVec.empty()){
+    //        ChimericFragment_t & parentFrag = fragmentVec.back();
+    //        //bool bMod = false;
+    //        int part = 0;
+    //        for( const CXA & cxa : partMappings){
+    //            part++;
+    //            bool isViral = VirusNameSet.count(cxa.chr);
+    //            uint8_t clipSide = cxa.clipSide();
+    //            if(flag & 0x1){ // If the alignment is from a clip
+    //                //If left clip, then the right is clipped away
+    //                //Otherwise the left is clipped away
+    //                //This flips if the clip maps to the reverse strand
+    //                //1Left 0+ = Right 
+    //                //0Right 0+ = Left
+    //                //1Left 1- = Left
+    //                //0Right 1- = Right
+    //                //Boils down to whehter they match or not
+    //                clipSide |= (bool(flag & 0x2) != cxa.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
+    //            }
+    //            //We are setting the host side as interval 1 by convention,
+    //            //as a result, any molecules which do not have both intervals
+    //            //is non chimeric, it will also be incomplete
+    //            ChimericFragment_t::IV_IDX ivIdx =  (isViral) ?
+    //                                                ChimericFragment_t::IV2 :
+    //                                                ChimericFragment_t::IV1;
+    //            //Attempt addition of the alignment assuming it is:
+    //            //  left-clipped - unless there are no left clipped bases
+    //            //  right-clipped - unless there are no right clipped bases
+    //            //  unclipped - unless it is already known to be clipped
+    //            for( CXA::CLIP_SIDE side : 
+    //                    {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
+    //            {
+    //                //Skip attempt UNCLIPPED if the alignment is a clip!
+    //                if((side == CXA::UNCLIPPED) && (flag & 0x1)) { continue; }
+    //                //Skip left clip if the alignment isn't left clipped
+    //                if((side == CXA::LEFT_CLIPPED) && !(clipSide & CXA::LEFT_CLIPPED)) { continue; }
+    //                //Skip right clip if the alignment isn't right clipped
+    //                if((side == CXA::RIGHT_CLIPPED) && !(clipSide & CXA::RIGHT_CLIPPED)) { continue; }
+    //                //Attempt to add the alignment interpretting it with the 
+    //                //  current clip status and direction
+    //                if (bLog) std::cerr << "Attempt Add Entry " << i << " Part " << part << " Side " << side << "\n";
+    //                ChimericFragment_t frag = parentFrag;
+    //                if(bLog) std::cerr << fragmentVecTmp.size() << ": PRE\t" <<frag.to_bedpe(true) << "\n";
+    //                if(frag.add_alignment(  cxa, (flag & 0x1),
+    //                                        (side != CXA::UNCLIPPED) && !(flag & 0x1),
+    //                                        side == CXA::RIGHT_CLIPPED,
+    //                                        flag & 0x4, clipSide, ivIdx))
+    //                {
+    //                    fragmentVecTmp.push_back(frag);
+    //                    //bMod = true;
+    //                }
+    //                else {
+    //                    if(bLog) std::cerr << "Failure to add\n";
+    //                }
+    //                if(bLog) std::cerr << fragmentVecTmp.size() << ": POST\t" << frag.to_bedpe(true) << "\n";
+    //            }
+    //        }
+    //        //Retain the parent if no alignments could be added
+    //        //if(!bMod){
+    //        //Retain the parent so that fragments which don't require all alignments can be considered
+    //            fragmentVecTmp.push_back(parentFrag);
+    //        //}
+    //        fragmentVec.pop_back();
+    //    }
+    //    std::swap(fragmentVec,fragmentVecTmp);
+    //}
+    bool bLog = true;
+    //if(bLog) std::cerr << fragmentVec.size() << "\n";
     bool bValid = true;
     //Perform check that
     //all fragments are chimeric
     for(const ChimericFragment_t & frag : fragmentVec ){
-        if(bLog) std::cerr << "TEST\n" << frag.to_bedpe(true) << "\n";
+        //if(bLog) std::cerr << "TEST\n" << frag.to_bedpe(true) << "\n";
         if(frag.not_chimeric()){
-            if(bLog) std::cerr << "FAILURE\n";
+            //if(bLog) std::cerr << "FAILURE\n";
             bValid = false;
             break;
         }
@@ -575,7 +951,7 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
             std::string bedpeStr = frag.to_bedpe();
             //auto pair = knownFragments.insert(bedpeStr);
             //if(pair.second){
-            std::cerr << "FINAL\t"<< frag.to_bedpe(true) << "\n";
+            //std::cerr << "FINAL\t"<< frag.to_bedpe(true) << "\n";
             mu.lock();
             outbed << bedpeStr << "\n";
             mu.unlock();
@@ -585,7 +961,7 @@ void ProcessAlnVec(std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVe
         }
     }
     DestroyAlnVector(alnVecPtr);
-    if(bLog) std::cerr << "Terminate Proc Aln\n";
+    //if(bLog) std::cerr << "Terminate Proc Aln\n";
 }
 
 //void ProcessPair(   bam1_t *r1, bam1_t *r2, std::string cname1,
