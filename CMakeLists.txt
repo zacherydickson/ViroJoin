@@ -28,6 +28,9 @@ add_executable(cleanbam ${CLEAN_BAM_SRC})
 set(ENUM_CHIM_FRAG_SRC src/enumerate_chimeric_fragments.cpp)
 add_executable(enumerate_chimeric_fragments ${ENUM_CHIM_FRAG_SRC})
 
+set(FIND_BP_COMM_SRC src/find_breakpoint_communities.cpp)
+add_executable(find_breakpoint_communities ${FIND_BP_COMM_SRC})
+
 set(ENUMERATE_EDGES_SRC src/enumerate_edges.cpp)
 add_executable(enumerate_edges ${ENUMERATE_EDGES_SRC})
 
@@ -54,6 +57,7 @@ target_link_libraries(addX2tag "${HTS_LIB}")
 target_link_libraries(cleanbam "${HTS_LIB}")
 target_link_libraries(enumerate_chimeric_fragments "${HTS_LIB}")
 target_link_libraries(cluster_junctions "${HTS_LIB}" "${IGRAPH_LIB}" "${LEIDIN_LIB}")
+target_link_libraries(find_breakpoint_communities "${HTS_LIB}" "${IGRAPH_LIB}" "${LEIDIN_LIB}")
 target_link_libraries(isolate_relevant_pairs "${HTS_LIB}")
 target_link_libraries(isolate_relevant_pairs_fq "${HTS_LIB}")
 target_link_libraries(isolate_relevant_pairs_fq ZLIB::ZLIB)
