@@ -70,8 +70,11 @@ class ChimericFragment_t {
     std::array<size_t,2> distal_pos() const {
         return {this->distal_pos(IV1),this->distal_pos(IV2)};
     }
-    bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
+    const std::string & getName() const { return name; }
+    const std::string & getChr(IV_IDX ivIdx) const { return chr[ivIdx]; }
+    bool opens_left(IV_IDX ivIdx) const { return flag[ivIdx] & OPENS_LEFT; }
     bool is_chimeric() const { return this->both(HAS_INTERVAL); }
+    bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
     bool is_split(IV_IDX ivIdx) const { return this->flag[ivIdx] & IS_SPLIT; }
     bool not_chimeric() const;
     size_t proximal_pos(IV_IDX ivIdx) const { 
@@ -96,7 +99,7 @@ class ChimericFragment_t {
     int dominant_comparison (const ChimericFragment_t & other) const;
     std::string to_bedpe(bool bitflag = false) const ;
     //Static Methods
-    ChimericFragment_t from_bedpe(const std::string bedpe) {
+    static ChimericFragment_t from_bedpe(const std::string bedpe) {
         auto fields = strsplit(bedpe,'\t');
         if(fields.size() < 8){
             throw std::invalid_argument("Attempt to construct Chimeric Fragment from incomplete bedpe entry");
