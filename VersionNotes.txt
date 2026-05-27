@@ -54,4 +54,6 @@ Version 2.0.0
         All support is one the basis of a fragment which is inferred from the alignments of reads
         This Prevents a Major Bug where a junction could be supported by one read in a pair,
          despite the mate indicating all reads were from PCR duplicates of the same molecule
+        Clustering of Candidate regions is now performed via community detection on a graph with junction position nodes
+        and edges weighted by levels of support and agreement
         QC information on strand bias and read position bias is now incorporated into the filtering
