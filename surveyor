@@ -126,7 +126,7 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "hBed"      : "h.bed",
         "hSeq"      : "host_bp_seqs.fa",
         "jBed"      : "j.bed",
-        "juncCand"  : "junction-candidates.bed",
+        "juncCand"  : "junction-candidates.bedpe",
         "regSeq"    : "regions.fna",
         "regCand"   : "region-candidates.bed",
         "rrMap"     : "read_regionMap.tab",
@@ -151,7 +151,7 @@ CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
 ]
 
 BIN_DICT = { nm : os.path.join(SURVIRUS_BIN_PATH,nm) for nm in (
-        "cleanbam", "addX2tag", "enumerate_edges",
+        "cleanbam", "addX2tag", "enumerate_edges", "enumerate_chimeric_fragments"
         "cluster_junctions", "edge_mapper", "extract_clips", "extract_regions",
         "filter", "isolate_relevant_pairs", "isolate_relevant_pairs_fq" )
 }
@@ -205,6 +205,14 @@ def filter_bed(path,strict_filter):
     a_flag = "-A" if strict_filter else ""
     tmp_file = path + ".tmp"
     bedtools_cmd = (f"{cmd_args.bedtools} subtract {a_flag} -a {path}"
+                    f" -b {cmd_args.excluded_regions_bed} > {tmp_file}" )
+    execute(bedtools_cmd)
+    os.replace(tmp_file, path)
+
+def filter_bedpe(path):
+    "filters excluded regions from a bedpe file"
+    tmp_file = path + ".tmp"
+    bedtools_cmd = ( f"{cmd_args.bedtools} pairtobed -type neither -a {path}"
                     f" -b {cmd_args.excluded_regions_bed} > {tmp_file}" )
     execute(bedtools_cmd)
     os.replace(tmp_file, path)
@@ -453,13 +461,13 @@ if missing_file(PATH_DICT["allNSBam"]):
     execute(collect_alignments_cmd)
 
 #Extract candidate host and viral positions
-extract_regions_cmd = ( f"{BIN_DICT['extract_regions']}"
+extract_regions_cmd = ( f"{BIN_DICT['enumerate_chimeric_fragments']}"
                         f" {cmd_args.virus_reference}"
                         f" {cmd_args.workdir} {bam_workspace}" )
 if missing_file(PATH_DICT["juncCand"]):
     execute(extract_regions_cmd)
     if cmd_args.excluded_regions_bed is not None:
-        filter_bed(PATH_DICT['juncCand'],strict_filter=True)
+        filter_bedpe(PATH_DICT['juncCand'])
 # Collapse Junctions together into regions
 cluster_junctions_cmd = (   f"{BIN_DICT['cluster_junctions']}"
                             f" {cmd_args.virus_reference}"
