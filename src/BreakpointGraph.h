@@ -50,6 +50,7 @@ protected:
     igraph_t graph;
     std::string chromosome;
     bool opensLeft;
+protected:
     bool ownsGraph;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
     std::map<std::pair<int, int>, igraph_integer_t> vertex_lookup;
@@ -63,6 +64,7 @@ public:
     
 //Con-/Destruction
 public:
+    CBPGraph() = delete;
     CBPGraph(const std::string& chrom, bool opensLeftVal, 
              int upsDist, int rLen, int maxInsert, double sFactor);
     ~CBPGraph() { if(ownsGraph) {igraph_destroy(&graph); } }
@@ -76,8 +78,10 @@ public:
 public:
     // Expose the raw pointer to make it directly compatible with libleidenalg C API
     igraph_t* get_igraph() { return &graph; }
-    const igraph_t* get_igraph() const { return &graph; }
-    
+    //const igraph_t* get_igraph() const { return &graph; }
+    VertexProps get_vertex_properties(int id) { return vertices[id]; }
+    std::string get_chromosome() {return chromosome;}
+    bool opens_left() {return opensLeft;}
 //Methods:
 public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
