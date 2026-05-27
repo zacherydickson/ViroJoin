@@ -95,6 +95,26 @@ class ChimericFragment_t {
                         ChimericFragment_t::IV_IDX ivIdx);
     int dominant_comparison (const ChimericFragment_t & other) const;
     std::string to_bedpe(bool bitflag = false) const ;
+    //Static Methods
+    ChimericFragment_t from_bedpe(const std::string bedpe) {
+        auto fields = strsplit(bedpe,'\t');
+        if(fields.size() < 8){
+            throw std::invalid_argument("Attempt to construct Chimeric Fragment from incomplete bedpe entry");
+        }
+        ChimericFragment_t frag(fields[6]);
+        frag.chr = {fields[0],fields[3]};
+        size_t vals[5];
+        int idx = 0;
+        for(int i : {1,2,4,5,7}) {
+            vals[idx++] = (fields[i] == ".") ? 0 : std::stoul(fields[i]);
+        }
+        frag.off = {vals[0],vals[1]};
+        frag.end = {vals[2],vals[3]};
+        frag.flag = {   uint16_t(vals[4] >> (FLAG_BITS + 1)),
+                        uint16_t(vals[4] & ((1 << FLAG_BITS) - 1))
+        };
+        return frag;
+    }
 };
 
 //Output - true if the alignment was successfully added, false otherwise
