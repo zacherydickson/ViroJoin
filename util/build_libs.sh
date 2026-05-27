@@ -16,7 +16,7 @@ cd ..
 rm -rf "htslib-$htsLibVer"
 
 ##Build igraph
-tar -xzf tar -xzf "igraph-$igraphVer.tar.gz"
+tar -xzf "igraph-$igraphVer.tar.gz"
 cd "igraph-$igraphVer"
 mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX="$installDir" -DCMAKE_POSITION_INDEPENDENT_CODE=ON
