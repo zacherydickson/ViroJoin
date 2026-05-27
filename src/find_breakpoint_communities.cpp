@@ -4,8 +4,12 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "BreakpointGraph.h"
 #include "ChimericFragment.h"
 #include "igraph/igraph.h"
+#include "libleidenalg/GraphHelper.h"
+#include "libleidenalg/Optimiser.h"
+#include "libleidenalg/ModularityVertexPartition.h"
 #include "config.h"
 #include "utils.h"
 
@@ -13,7 +17,8 @@
 
 struct jRegLabel_t {
     std::string chr;
-    size_t pos;
+    size_t distPos;
+    size_t proxPos;
     bool opensLeft;
     bool isSplit;
     int compare(const jRegLabel_t & other, size_t dist = 0) const {
@@ -23,8 +28,10 @@ struct jRegLabel_t {
 	if(this->opensLeft != other.opensLeft) {
 	    return (this->opensLeft) ? 1 : -1;
 	}
-	if(this->pos > other.pos && this->pos - other.pos > dist) return 1;
-	if(this->pos < other.pos && other.pos - this->pos > dist) return -1;
+	if(this->proxPos > other.proxPos && this->proxPos - other.proxPos > dist) return 1;
+	if(this->proxPos < other.proxPos && other.proxPos - this->proxPos > dist) return -1;
+	if(this->distPos > other.distPos && this->distPos - other.distPos > dist) return 1;
+	if(this->distPos < other.distPos && other.distPos - this->distPos > dist) return -1;
         if(this->isSplit != other.isSplit){
             return (this->isSplit) ? 1 : -1;
         }
@@ -42,7 +49,7 @@ struct jRegLabel_HashFunctor {
     size_t operator()(const jRegLabel_t & a) const {
 	return std::hash<std::string>{}(
                 a.chr + std::to_string(a.opensLeft << 1 | a.isSplit) +
-                std::to_string(a.pos)
+                std::to_string(a.proxPos) + std::to_string(a.distPos)
         );
     }
 };
@@ -81,12 +88,16 @@ typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
 			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
 	    MututalJRegSetMap_t;
 
+typedef std::unordered_map<std::string,CBPGraph> GraphMap_t;
+
 //==== GLOBAL VARIABLE DECLARATIONS
 
 static size_t MinimumReads = 4;
 static int SplitBonus = 1;
 int MaxInsertSize;
 int ReadLength;
+int UpstreamSize = 5;
+double SplitFactor = 2.0;
 std::unordered_set<std::string> VirusNameSet;
 
 //==== FUNCTION DECLARATIONS
@@ -102,7 +113,8 @@ void FilterRegions(jRegMap_t & regionMap);
 void OutputRegions( std::string regfname, std::string readfname,
                     const jRegMap_t & regionMap);
 
-void IdentifyCommunities(const std::string fname);
+GraphMap_t LoadGraphs(const std::string & fname);
+void IdentifyCommunities(GraphMap_t & graphMap);
 
 //==== MAIN
 
@@ -134,14 +146,16 @@ int main(int argc, char* argv[]) {
     jRegLabelCount_t labelCount;
 
     igraph_setup();
-    IdentifyCommunities(candidate_file_name);
 
-    BestJRegSetMap_t regionAssignments;
-    IdentifyBestJunctions(candidate_file_name,regionAssignments);
-    jRegMap_t regionMap;
-    ClusterRegions(candidate_file_name,regionAssignments,regionMap);
-    FilterRegions(regionMap);
-    OutputRegions(reg_file_name,read_file_name,regionMap);
+    GraphMap_t graphMap = LoadGraphs(candidate_file_name);
+    IdentifyCommunities(graphMap);
+
+    //BestJRegSetMap_t regionAssignments;
+    //IdentifyBestJunctions(candidate_file_name,regionAssignments);
+    //jRegMap_t regionMap;
+    //ClusterRegions(candidate_file_name,regionAssignments,regionMap);
+    //FilterRegions(regionMap);
+    //OutputRegions(reg_file_name,read_file_name,regionMap);
     fprintf(stderr,"Done - cluster_junctions\n");
 }
 
@@ -441,24 +455,10 @@ void FilterRegions(jRegMap_t & regionMap){
 //    fprintf(stderr,"\nRegions Printed\n");
 //}
 
-
-
-//NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
-//  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
-//  strand in advance
-void IdentifyCommunities(const std::string fname) {
-    igraph_error_t result(IGRAPH_SUCCESS);
-    igraph_t * graph(nullptr);
-
-    result = igraph_empty(graph, 0, IGRAPH_UNDIRECTED);
-    if(result == IGRAPH_EINVAL){
-        fprintf(stderr,"Invalid verticies");
-    }
-
-    jRegLabelSet_t 
+GraphMap_t LoadGraphs(const std::string & fname) {
+    std::cerr << "Loading graphs ..." << "\n";
     std::ifstream in(fname);
-    std::string chr,qname;
-    std::unordered_map<std::string,igraph_t*> graphByMolecule;
+    GraphMap_t graphByContig;
     std::string bedpeStr;
     while(getline(in,bedpeStr)){
         ChimericFragment_t frag = ChimericFragment_t::from_bedpe(bedpeStr);
@@ -466,29 +466,39 @@ void IdentifyCommunities(const std::string fname) {
         for( ChimericFragment_t::IV_IDX ivIdx :
                 {ChimericFragment_t::IV1, ChimericFragment_t::IV2} ) 
         {
-	    jRegLabel_t label = {   chr,frag.proximal_pos(ivIdx),
-                                    frag.opens_left(ivIdx),
-                                    frag.is_split(ivIdx) };
+            std::string contig =    frag.getChr(ivIdx) +
+                                    ((frag.opens_left(ivIdx)) ? "L" : "R");
+            if(!graphByContig.count(contig)){
+                CBPGraph graph( frag.getChr(ivIdx), frag.opens_left(ivIdx),
+                                UpstreamSize, ReadLength,
+                                MaxInsertSize, SplitFactor);
+               graphByContig.insert({contig, std::move(graph)}); 
+            }
+            CBPGraph & graph = graphByContig.at(contig);
+            graph.addOrUpdateVertex( frag.proximal_pos(ivIdx),
+                                     frag.distal_pos(ivIdx),
+                                     frag.is_split(ivIdx),
+                                     frag.getName());
         }
-
-    //while (in >> chr >> off >> end >> qname >> score >> strand){
-        std::string moleculeName = chr + strand;
-	bool bSplit = (qname[qname.length()-2] == '_');
-        //Construct a new graph for the molecule if it hasn't been encountered yet
-        if(!graphByMolecule.count(moleculeName)){
-            graphByMolecule[moleculeName] = nullptr;
-            igraph_empty(graphByMolecule[moleculeName],0,IGRAPH_UNDIRECTED);
-        }
-        //Reference for brevity
-        igraph_t* & graph = graphByMolecule[moleculeName];
-        result = igraph_add_vertices(graph,1,nullptr); 
-	//if(!labelCount.count(label)) {
-	//    labelCount[label] = 0;
-	//    labelVec.push_back(label);
-	//    labelFromSplitOnly[label] = true;
-	//}
-	//labelCount[label]++;
-	//if(!bSplit) labelFromSplitOnly[label] = false;
     }
-    igraph_destroy(graph);
+    std::cerr << "Loaded " << graphByContig.size() << " graphs\n";
+    return graphByContig;
+}
+
+//NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
+//  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
+//  strand in advance
+void IdentifyCommunities(GraphMap_t & graphMap) {
+    std::cerr << "IDing communities ..." << "\n";
+    for( auto & pair : graphMap){
+        Graph graph = Graph(pair.second.get_igraph());
+        ModularityVertexPartition part(&graph);
+        Optimiser o;
+        o.optimise_partition(&part);
+        for(size_t i = 0; i < graph.vcount(); i++){
+            VertexProps props = pair.second.get_vertex_properties(i);
+            std::cout << i << "\t" << pair.second.get_chromosome() << ":" << pair.second.opens_left() << "\t" << part.membership(i) << "\t" << props.assocFragments << "\n";
+        }
+    }
+    std::cerr << "Done ID communities" << "\n";
 }
