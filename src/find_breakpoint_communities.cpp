@@ -6,6 +6,7 @@
 
 #include "BreakpointGraph.h"
 #include "ChimericFragment.h"
+#include "RegionGraph.h"
 #include "igraph/igraph.h"
 #include "libleidenalg/GraphHelper.h"
 #include "libleidenalg/Optimiser.h"
@@ -88,7 +89,7 @@ typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
 			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
 	    MututalJRegSetMap_t;
 
-typedef std::unordered_map<std::string,CBPGraph> GraphMap_t;
+typedef std::unordered_map<std::string,CBPGraph> BPGraphMap_t;
 
 //==== GLOBAL VARIABLE DECLARATIONS
 
@@ -107,14 +108,20 @@ void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
                     MututalJRegSetMap_t & mutualJRegSetMap);
 void IdentifyBestJunctions( const std::string fname,
                             BestJRegSetMap_t & bestSetMap);
+bool ClusterBPGraph(CBPGraph & graph);
+void ClusterBPGraphs(BPGraphMap_t & graphMap);
 void ClusterRegions(const std::string fname, 
                     const BestJRegSetMap_t & bestSetMap, jRegMap_t & regionMap);
+
+CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap);
+bool FilterBPGraph(CBPGraph & graph);
+void FilterBPGraphs(BPGraphMap_t & graphMap);
 void FilterRegions(jRegMap_t & regionMap);
 void OutputRegions( std::string regfname, std::string readfname,
                     const jRegMap_t & regionMap);
 
-GraphMap_t LoadGraphs(const std::string & fname);
-void IdentifyCommunities(GraphMap_t & graphMap);
+BPGraphMap_t LoadBPGraphs(const std::string & fname);
+void IdentifyCommunities(BPGraphMap_t & graphMap);
 
 //==== MAIN
 
@@ -147,17 +154,15 @@ int main(int argc, char* argv[]) {
 
     igraph_setup();
 
-    GraphMap_t graphMap = LoadGraphs(candidate_file_name);
-    for(auto it = graphMap.begin(); it != graphMap.end(); ){
-        it->second.filterVertices(MinimumReads, SplitBonus);
-        if(size_t(it->second.vcount() + SplitBonus) < MinimumReads){
-            it = graphMap.erase(it);
-        } else {
-            it++;
-        }
-    }
-    std::cerr << "Filtered Down to " << graphMap.size() << " graphs\n";
-    
+    BPGraphMap_t graphMap = LoadBPGraphs(candidate_file_name);
+    //TODO: parallelize
+    FilterBPGraphs(graphMap);
+    ClusterBPGraphs(graphMap);
+    CRegionGraph regGraph = ConstructRegionGraph(graphMap);
+    regGraph.filterEdges(MinimumReads,SplitBonus);
+    //TODO: Output
+
+       
     //IdentifyCommunities(graphMap);
 
     //BestJRegSetMap_t regionAssignments;
@@ -170,6 +175,72 @@ int main(int argc, char* argv[]) {
 }
 
 //==== FUNCTION DEFINITIONS
+
+//Identifies all maximal cliques within a graph
+//Inputs    - a graph to filter
+//Output    - true if the graph still has sufficient support, false otherwise
+bool ClusterBPGraph(CBPGraph & graph) {
+    return graph.maximalCliques(MinimumReads, SplitBonus);
+}
+
+//Filters each graph in a graph map
+//Inputs    - a graph map containing graphs to filter
+//Output    - None, modifies the input
+void ClusterBPGraphs(BPGraphMap_t & graphMap) {
+    fprintf(stderr,"Clustering fragments within graphs ...\n");
+    for(auto it = graphMap.begin(); it != graphMap.end(); ){
+        if(ClusterBPGraph(it->second)){ 
+            it++;
+        } else {
+            it = graphMap.erase(it);
+        }
+    }
+    fprintf(stderr,"After clustering %lu graphs remain\n",graphMap.size());
+}
+
+//Takes the cliques generated in the graph map and builds regions from them
+//Which are then placed into a bipartite graph of host and viral regions
+CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap) {
+    CRegionGraph regGraph;
+    for( const auto & pair : graphMap ){
+        const CBPGraph & graph = pair.second;
+        std::string chr = graph.get_chromosome();
+        bool opensLeft = graph.opens_left();
+        bool isHost = !VirusNameSet.count(chr);
+        std::map<size_t,CRegionGraph::VertexProps> regionPropMap;
+        //Construct the Regions from the cliques in the graph
+        for(igraph_int_t id = 0; id < graph.vcount(); id++){
+            CBPGraph::VertexProps fragGrpProp = graph.get_vertex_properties(id);
+            //Construct a fragment Group String compatible with CRegionGraphs
+            std::string fragGrpStr = fragGrpProp.assocFragments.front();
+            for(size_t i = 1; i <= fragGrpProp.assocFragments.size(); i++){
+                fragGrpStr += CRegionGraph::dupDelim + fragGrpProp.assocFragments[i];
+            }
+            size_t left = std::min(fragGrpProp.proximalPos,fragGrpProp.distalPos);
+            size_t right = std::max(fragGrpProp.proximalPos,fragGrpProp.distalPos);
+            //Iterate over cliques for this id
+            for( int cID : fragGrpProp.cliques) {
+                if(!regionPropMap.count(cID)){
+                    CRegionGraph::VertexProps regProp = {   cID, chr, opensLeft,
+                                                            false, isHost, 
+                                                            size_t(~0),
+                                                            0, {}};
+                    regionPropMap.emplace(cID,regProp);
+                }
+                CRegionGraph::VertexProps & regProp = regionPropMap.at(cID);
+                regProp.fromSplit |= fragGrpProp.isSplit;
+                regProp.assocFragGroups.push_back(fragGrpStr);
+                if(left < regProp.left) { regProp.left = left; }
+                if(right > regProp.right) { regProp.right = right; }
+            }
+        }
+        //Add the regions to the region graph
+        for(const auto & pair : regionPropMap) {
+            regGraph.addOrUpdateVertex( pair.second);
+        }
+    }
+    return regGraph;
+}
 
 ////Parsed the candidate junctions and counts the instances of each junction
 ////Then outputs a vector of junction labels ordered from most to least numerous
@@ -351,6 +422,36 @@ int main(int argc, char* argv[]) {
 //     fprintf(stderr,"Selected %lu unique regions\n",regionMap.size());
 //}
 
+
+//Ensures that every vertex within a graph has sufficient edges to contribute to 
+//  a valid region, then ensures each graph has sufficient nodes to contibute to
+//  a valid region
+//Inputs    - a graph to filter
+//Output    - true if the graph still has sufficient support, false otherwise
+bool FilterBPGraph(CBPGraph & graph) {
+    graph.filterVertices(MinimumReads, SplitBonus);
+    if(size_t(graph.vcount() + SplitBonus) < MinimumReads){
+        return false;
+    }
+    return true;
+}
+
+//Filters each graph in a graph map
+//Inputs    - a graph map containing graphs to filter
+//Output    - None, modifies the input
+void FilterBPGraphs(BPGraphMap_t & graphMap) {
+    std::cerr << "Filtered Down to " << graphMap.size() << " graphs\n";
+    fprintf(stderr,"Filtering Initial BP Graphs ...\n");
+    for(auto it = graphMap.begin(); it != graphMap.end(); ){
+        if(FilterBPGraph(it->second)){ 
+            it++;
+        } else {
+            it = graphMap.erase(it);
+        }
+    }
+    fprintf(stderr,"Filtered Down to %lu graphs\n",graphMap.size());
+}
+
 //Outputs regions which have enough reads assigned,
 //  enough is defined as the minimum reads
 //  minus the split bonus if any split reads are present
@@ -465,10 +566,10 @@ void FilterRegions(jRegMap_t & regionMap){
 //    fprintf(stderr,"\nRegions Printed\n");
 //}
 
-GraphMap_t LoadGraphs(const std::string & fname) {
+BPGraphMap_t LoadBPGraphs(const std::string & fname) {
     std::cerr << "Loading graphs ..." << "\n";
     std::ifstream in(fname);
-    GraphMap_t graphByContig;
+    BPGraphMap_t graphByContig;
     std::string bedpeStr;
     while(getline(in,bedpeStr)){
         ChimericFragment_t frag = ChimericFragment_t::from_bedpe(bedpeStr);
@@ -498,7 +599,7 @@ GraphMap_t LoadGraphs(const std::string & fname) {
 //NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
 //  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
 //  strand in advance
-//void IdentifyCommunities(GraphMap_t & graphMap) {
+//void IdentifyCommunities(BPGraphMap_t & graphMap) {
 //    std::cerr << "IDing communities ..." << "\n";
 //    for( auto & pair : graphMap){
 //        Graph graph = Graph(pair.second.get_igraph());
