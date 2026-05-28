@@ -27,13 +27,14 @@ Could you write c++ code that matches this specification?
 //Since modified for style and readability
 
 
+#include <algorithm>
 #include "igraph/igraph.h"
+#include <iostream>
+#include <map>
+#include <stdexcept>
+#include <set>
 #include <string>
 #include <vector>
-#include <map>
-#include <algorithm>
-#include <iostream>
-#include <stdexcept>
 
 // Structure to cache vertex properties internally for quick lookup and manipulation
 struct VertexProps {
@@ -90,8 +91,14 @@ public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
     void filterVertices( double minDegree, double splitBonus);
+    std::vector<std::set<int>> maximalCliques(  double minVertex,
+                                                double splitBonus);
 private:
     void assertOwnership();
+    void BronKerbosh2 ( std::set<igraph_int_t> R,
+                        std::set<igraph_int_t> P,
+                        std::set<igraph_int_t> X,
+                        std::vector<std::set<int>> & res, int callDepth);
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void ensureValidLookup();
     void getWindow(int proxPos, bool isSplit, double& start, double& end) const;
@@ -306,6 +313,96 @@ void CBPGraph::init_attribute_table() {
         igraph_set_attribute_table(&igraph_cattribute_table);
         initialized = true;
     }
+}
+
+void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
+                                std::set<igraph_int_t> P,
+                                std::set<igraph_int_t> X,
+                                std::vector<std::set<int>> & res, int callDepth)
+{
+    std::cerr << callDepth << ") " << R.size() << " " << P.size() << " " << X.size() << "\t" << res.size() << "\n";
+    //If there are no more candidate nodes to add
+    //this clique is maximal
+    if(P.size() + X.size() == 0) {
+        std::set<int> clique;
+        clique.insert(R.begin(),R.end());
+        res.push_back(clique);
+    }
+    if(!P.size()) { return; }
+    //Select a pivot //TODO
+    igraph_int_t pivot = *P.begin();
+    //Identify neighbours (N) of the pivot, and remove them from P
+    igraph_vs_t vs; // The concept of picking vertices in a graph
+    igraph_vit_t vit; // The selection of verteces in this graph
+    igraph_vs_adj(&vs,pivot,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
+    igraph_vit_create(&graph, vs, &vit);
+    std::set<igraph_int_t> PnonPivot = P;
+    while(!IGRAPH_VIT_END(vit)) {
+        PnonPivot.erase(IGRAPH_VIT_GET(vit));
+        IGRAPH_VIT_NEXT(vit);
+    }
+    igraph_vit_destroy(&vit);
+    igraph_vs_destroy(&vs);
+    std::cerr << "\t" << P.size() << "\n";
+    while(PnonPivot.size()){
+        igraph_int_t v = *P.begin();
+        //Identify neighbours (N) of the vertex
+        igraph_vs_t vs; // The concept of picking vertices in a graph
+        igraph_vit_t vit; // The selection of verteces in this graph
+        igraph_vs_adj(&vs,v,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
+        igraph_vit_create(&graph, vs, &vit);
+        std::set<igraph_int_t> N;
+        while(!IGRAPH_VIT_END(vit)) {
+            N.insert(IGRAPH_VIT_GET(vit));
+            IGRAPH_VIT_NEXT(vit);
+        }
+        igraph_vit_destroy(&vit);
+        igraph_vs_destroy(&vs);
+        //Get the updated sets as R + v, Intersect(P,N) and Intersect (X,N)
+        std::set<igraph_int_t> Rprime = R;
+        Rprime.insert(v);
+        std::set<igraph_int_t> Pprime;
+        std::set<igraph_int_t> Xprime;
+        std::set_intersection(  P.begin(),P.end(),
+                                N.begin(),N.end(),
+                                std::inserter(Pprime,Pprime.end()));
+        std::set_intersection(  X.begin(),X.end(),
+                                N.begin(),N.end(),
+                                std::inserter(Xprime,Xprime.end()));
+        //Make the recursive call
+        BronKerbosh2(Rprime,Pprime,Xprime,res,callDepth+1);
+        //remove v from P
+        P.erase(v);
+        PnonPivot.erase(v);
+        //add v to x
+        X.insert(v);
+    }
+}
+
+
+std::vector<std::set<int>> CBPGraph::maximalCliques(    double minVertex,
+                                                        double splitBonus) {
+    std::vector<std::set<int>> cliques;
+    std::set<igraph_int_t> nodeIdx; 
+    for(igraph_int_t i = 0; i < this->vcount(); i++){
+        nodeIdx.insert(i);
+    }
+    this->BronKerbosh2({},nodeIdx,{},cliques,0);
+    for(auto it = cliques.begin(); it != cliques.end(); it++){
+        bool bSplit = false;
+        for(igraph_int_t id : *it){
+            if(VAB(&graph,"IsSplit",id)) {
+                bSplit = true;
+                break;
+            }
+        }
+        if(it->size() + ((bSplit) ? splitBonus : 0.0) < minVertex) {
+            it = cliques.erase(it);
+        } else {
+            it++;
+        }
+    }
+    return cliques;
 }
 
 
