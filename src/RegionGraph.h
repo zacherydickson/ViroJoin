@@ -70,6 +70,7 @@ public:
     void addOrUpdateVertex( std::string chromosome, bool opensLeft,
                             bool fromSplit, bool IsHost, size_t left,
                             size_t right, std::vector<std::string>);
+    void addOrUpdateVertex(const VertexProps & prop);
     void filterEdges( double minWeight, double splitBonus);
 private:
     void assertOwnership();
@@ -165,6 +166,13 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
     for (igraph_int_t old_vid : vertexWithFragmentSet){
         checkAndCreateEdge(old_vid, new_vid);
     }
+}
+
+
+void CRegionGraph::addOrUpdateVertex(const VertexProps & prop) {
+    this->addOrUpdateVertex(prop.chromosome, prop.opensLeft, prop.fromSplit,
+                            prop.isHost, prop.left, prop.right,
+                            prop.assocFragGroups);
 }
 
 
