@@ -50,13 +50,11 @@ protected:
     igraph_t graph;
     std::string chromosome;
     bool opensLeft;
-protected:
     bool ownsGraph;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
     std::map<std::pair<int, int>, igraph_integer_t> vertex_lookup;
     std::vector<VertexProps> vertices;
     // Window and weight configuration parameters
-public:
     int upstreamDist;
     int readLen;
     int maxInsertSize;
@@ -77,16 +75,17 @@ public:
 //Accessors
 public:
     // Expose the raw pointer to make it directly compatible with libleidenalg C API
-    igraph_t* get_igraph() { return &graph; }
+    igraph_t* get_igraph() { assertOwnership(); return &graph; }
     //const igraph_t* get_igraph() const { return &graph; }
-    VertexProps get_vertex_properties(int id) { return vertices[id]; }
-    std::string get_chromosome() {return chromosome;}
-    bool opens_left() {return opensLeft;}
+    VertexProps get_vertex_properties(int id) const { return vertices[id]; }
+    std::string get_chromosome() const {return chromosome;}
+    bool opens_left() const {return opensLeft;}
 //Methods:
 public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
-protected:
+private:
+    void assertOwnership();
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void getWindow(int proxPos, bool isSplit, double& start, double& end) const;
     void init_attribute_table();
@@ -116,6 +115,7 @@ CBPGraph::CBPGraph(CBPGraph&& other) :
     graph(std::move(other.graph)),
     chromosome(std::move(other.chromosome)),
     opensLeft(std::move(other.opensLeft)),
+    ownsGraph(other.ownsGraph),
     vertex_lookup(std::move(other.vertex_lookup)),
     vertices(std::move(other.vertices)),
     upstreamDist(other.upstreamDist),
@@ -133,6 +133,7 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
     graph = std::move(other.graph);
     chromosome = std::move(other.chromosome);
     opensLeft = std::move(other.opensLeft);
+    ownsGraph = other.ownsGraph;
     vertex_lookup = std::move(other.vertex_lookup);
     vertices = std::move(other.vertices);
     upstreamDist = other.upstreamDist;
@@ -143,6 +144,14 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
     return *this;
 }
 
+
+//Checks that this object owns its underlying graph and can make changes
+void CBPGraph::assertOwnership() { 
+        if(!ownsGraph) {
+            throw std::logic_error("Attempt to call non-const function from moved graph");
+        }
+    }
+
 /**
      * Adds a vertex if the (proximalPos, distalPos) pair is unique.
      * If it already exists, merges attributes with the existing vertex.
@@ -150,6 +159,7 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
 void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit,
                                     const std::string& assocFragments)
 {
+    assertOwnership();
     auto key = std::make_pair(proximalPos, distalPos);
     auto it = vertex_lookup.find(key);
 
