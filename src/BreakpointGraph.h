@@ -34,16 +34,9 @@ Could you write c++ code that matches this specification?
 #include <stdexcept>
 #include <set>
 #include <string>
+#include "str_utils.h"
 #include <vector>
 
-// Structure to cache vertex properties internally for quick lookup and manipulation
-struct VertexProps {
-    igraph_integer_t id;
-    int proximalPos;
-    int distalPos;
-    bool isSplit;
-    std::string assocFragments;
-};
 
 //Note: Current implementation stores all graph and vertex attributes twice
 //  in the object, and in the underyling graph
@@ -53,7 +46,17 @@ public:
         OWNS_GRAPH = 0x1,
         VALID_LOOKUP = 0x2,
     };
+// Structure to cache vertex properties internally for quick lookup and manipulation
+struct VertexProps {
+    igraph_integer_t id;
+    int proximalPos;
+    int distalPos;
+    bool isSplit;
+    std::string assocFragments;
+};
     //Members
+public:
+    static const char dupDelim = 29;
 protected:
     igraph_t graph;
     uint8_t flag;
@@ -75,7 +78,7 @@ public:
     // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
     CBPGraph(const CBPGraph&) = delete;
     CBPGraph& operator=(const CBPGraph&) = delete;
-    // Move semantics can be implemented if needed, but deleting for safety here
+    //Move semantics
     CBPGraph(CBPGraph&& other);
     CBPGraph& operator=(CBPGraph&& other);
 //Accessors
@@ -165,7 +168,7 @@ void CBPGraph::assertOwnership() {
      * If it already exists, merges attributes with the existing vertex.
      */
 void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit,
-                                    const std::string& assocFragments)
+                                    const std::string& assocFragment)
 {
     assertOwnership();
     auto key = std::make_pair(proximalPos, distalPos);
@@ -180,12 +183,18 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         VertexProps props = this->get_vertex_properties(vid);
         props.isSplit = props.isSplit || isSplit;
         
-        // Append the assocFragments information (delimited by a comma)
-        if (!props.assocFragments.empty() && !assocFragments.empty()) {
-            props.assocFragments += "," + assocFragments;
-        } else if (!assocFragments.empty()) {
-            props.assocFragments = assocFragments;
+        //Construct a string representing the sorted, unique fragment names associated
+        //with this vertex
+        std::vector<std::string> fragNames = strsplit(props.assocFragments,dupDelim);
+        std::set<std::string> fragNameSet;
+        fragNameSet.insert(fragNames.begin(),fragNames.end());
+        fragNameSet.insert(assocFragment);
+        std::string fragStr = *fragNameSet.begin();
+        for(auto it = fragNameSet.begin(); it != fragNameSet.end(); it++){
+            if(it == fragNameSet.begin()) { continue; }
+            fragStr += dupDelim + *it; 
         }
+        props.assocFragments = fragStr;
 
         // Update underlying igraph C attributes
         SETVAB(&graph, "IsSplit", vid, props.isSplit);
@@ -202,7 +211,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         SETVAN(&graph, "ProximalPos", new_vid, proximalPos);
         SETVAN(&graph, "DistalPos", new_vid, distalPos);
         SETVAB(&graph, "IsSplit", new_vid, isSplit);
-        SETVAS(&graph, "assocFragments", new_vid, assocFragments.c_str());
+        SETVAS(&graph, "assocFragments", new_vid, assocFragment.c_str());
 
         // Check against all pre-existing vertices to evaluate edge creations
         for (igraph_integer_t old_vid = 0; old_vid < new_vid; ++old_vid) {
@@ -276,7 +285,6 @@ void CBPGraph::filterVertices( double minSupport, double splitBonus) {
         double support =    1.0 + degree +
                             (VAB(&graph,"IsSplit",i) ? splitBonus : 0);
         if(support < minSupport) {
-
             toFilter.push_back(i);
         }
     }
@@ -329,7 +337,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
         res.push_back(clique);
     }
     if(!P.size()) { return; }
-    //Select a pivot //TODO
+    //Select a pivot //TODO Do it smarter
     igraph_int_t pivot = *P.begin();
     //Identify neighbours (N) of the pivot, and remove them from P
     igraph_vs_t vs; // The concept of picking vertices in a graph
@@ -406,7 +414,7 @@ std::vector<std::set<int>> CBPGraph::maximalCliques(    double minVertex,
 }
 
 
-VertexProps CBPGraph::get_vertex_properties(int id) const {
+CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
     return {    id,
                 int(std::lround(VAN(&graph,"ProximalPos",id))),
                 int(std::lround(VAN(&graph,"DistalPos",id))),
