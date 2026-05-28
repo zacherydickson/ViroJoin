@@ -148,7 +148,17 @@ int main(int argc, char* argv[]) {
     igraph_setup();
 
     GraphMap_t graphMap = LoadGraphs(candidate_file_name);
-    IdentifyCommunities(graphMap);
+    for(auto it = graphMap.begin(); it != graphMap.end(); ){
+        it->second.filterVertices(MinimumReads, SplitBonus);
+        if(size_t(it->second.vcount() + SplitBonus) < MinimumReads){
+            it = graphMap.erase(it);
+        } else {
+            it++;
+        }
+    }
+    std::cerr << "Filtered Down to " << graphMap.size() << " graphs\n";
+    
+    //IdentifyCommunities(graphMap);
 
     //BestJRegSetMap_t regionAssignments;
     //IdentifyBestJunctions(candidate_file_name,regionAssignments);
@@ -488,17 +498,17 @@ GraphMap_t LoadGraphs(const std::string & fname) {
 //NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
 //  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
 //  strand in advance
-void IdentifyCommunities(GraphMap_t & graphMap) {
-    std::cerr << "IDing communities ..." << "\n";
-    for( auto & pair : graphMap){
-        Graph graph = Graph(pair.second.get_igraph());
-        ModularityVertexPartition part(&graph);
-        Optimiser o;
-        o.optimise_partition(&part);
-        for(size_t i = 0; i < graph.vcount(); i++){
-            VertexProps props = pair.second.get_vertex_properties(i);
-            std::cout << i << "\t" << pair.second.get_chromosome() << ":" << pair.second.opens_left() << "\t" << part.membership(i) << "\t" << props.assocFragments << "\n";
-        }
-    }
-    std::cerr << "Done ID communities" << "\n";
-}
+//void IdentifyCommunities(GraphMap_t & graphMap) {
+//    std::cerr << "IDing communities ..." << "\n";
+//    for( auto & pair : graphMap){
+//        Graph graph = Graph(pair.second.get_igraph());
+//        ModularityVertexPartition part(&graph);
+//        Optimiser o;
+//        o.optimise_partition(&part);
+//        for(size_t i = 0; i < graph.vcount(); i++){
+//            VertexProps props = pair.second.get_vertex_properties(i);
+//            std::cout << i << "\t" << pair.second.get_chromosome() << ":" << pair.second.opens_left() << "\t" << part.membership(i) << "\t" << props.assocFragments << "\n";
+//        }
+//    }
+//    std::cerr << "Done ID communities" << "\n";
+//}

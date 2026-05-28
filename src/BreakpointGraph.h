@@ -44,16 +44,21 @@ struct VertexProps {
     std::string assocFragments;
 };
 
+//Note: Current implementation stores all graph and vertex attributes twice
+//  in the object, and in the underyling graph
 class CBPGraph {
+public:
+    enum GRAPH_STATES {
+        OWNS_GRAPH = 0x1,
+        VALID_LOOKUP = 0x2,
+    };
     //Members
 protected:
     igraph_t graph;
-    std::string chromosome;
-    bool opensLeft;
-    bool ownsGraph;
+    uint8_t flag;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
     std::map<std::pair<int, int>, igraph_integer_t> vertex_lookup;
-    std::vector<VertexProps> vertices;
+    //std::vector<VertexProps> vertices;
     // Window and weight configuration parameters
     int upstreamDist;
     int readLen;
@@ -65,7 +70,7 @@ public:
     CBPGraph() = delete;
     CBPGraph(const std::string& chrom, bool opensLeftVal, 
              int upsDist, int rLen, int maxInsert, double sFactor);
-    ~CBPGraph() { if(ownsGraph) {igraph_destroy(&graph); } }
+    ~CBPGraph() { if(flag & OWNS_GRAPH) {igraph_destroy(&graph); } }
     // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
     CBPGraph(const CBPGraph&) = delete;
     CBPGraph& operator=(const CBPGraph&) = delete;
@@ -74,19 +79,21 @@ public:
     CBPGraph& operator=(CBPGraph&& other);
 //Accessors
 public:
-    // Expose the raw pointer to make it directly compatible with libleidenalg C API
+    std::string get_chromosome() const { return GAS(&graph,"Chromosome"); }
     igraph_t* get_igraph() { assertOwnership(); return &graph; }
-    //const igraph_t* get_igraph() const { return &graph; }
-    VertexProps get_vertex_properties(int id) const { return vertices[id]; }
-    std::string get_chromosome() const {return chromosome;}
-    bool opens_left() const {return opensLeft;}
+    bool opens_left() const {return GAB(&graph,"OpensLeft");}
+    VertexProps get_vertex_properties(int id) const;
+    int vcount() const { return igraph_vcount(&graph); }
+    int ecount() const { return igraph_ecount(&graph); }
 //Methods:
 public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
+    void filterVertices( double minDegree, double splitBonus);
 private:
     void assertOwnership();
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    void ensureValidLookup();
     void getWindow(int proxPos, bool isSplit, double& start, double& end) const;
     void init_attribute_table();
 };
@@ -96,7 +103,7 @@ private:
 //Constructor
 CBPGraph::CBPGraph(const std::string& chrom, bool opensLeftVal, 
              int upsDist, int rLen, int maxInsert, double sFactor)
-        : chromosome(chrom), opensLeft(opensLeftVal), ownsGraph(true),
+        : flag(OWNS_GRAPH | VALID_LOOKUP),
           upstreamDist(upsDist), readLen(rLen), maxInsertSize(maxInsert),
           splitFactor(sFactor)
 {
@@ -106,48 +113,42 @@ CBPGraph::CBPGraph(const std::string& chrom, bool opensLeftVal,
         throw std::runtime_error("Failed to initialize igraph object.");
     }
     // Set graph-level attributes
-    SETGAS(&graph, "Chromosome", chromosome.c_str());
-    SETGAB(&graph, "OpensLeft", opensLeft);
+    SETGAS(&graph, "Chromosome", chrom.c_str());
+    SETGAB(&graph, "OpensLeft", opensLeftVal);
 }
 
 //Move Constructor
 CBPGraph::CBPGraph(CBPGraph&& other) :
     graph(std::move(other.graph)),
-    chromosome(std::move(other.chromosome)),
-    opensLeft(std::move(other.opensLeft)),
-    ownsGraph(other.ownsGraph),
+    flag(other.flag),
     vertex_lookup(std::move(other.vertex_lookup)),
-    vertices(std::move(other.vertices)),
     upstreamDist(other.upstreamDist),
     readLen(other.readLen),
     maxInsertSize(other.maxInsertSize),
     splitFactor(other.splitFactor)
 {
-    other.ownsGraph=false;
+    other.flag &= ~OWNS_GRAPH;
 }
 
 //Move Assignment Operator
 CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
     if(this == &other) { return *this; }
-    if(ownsGraph) { igraph_destroy(&graph); }
+    if(flag & OWNS_GRAPH) { igraph_destroy(&graph); }
     graph = std::move(other.graph);
-    chromosome = std::move(other.chromosome);
-    opensLeft = std::move(other.opensLeft);
-    ownsGraph = other.ownsGraph;
+    flag = other.flag;
     vertex_lookup = std::move(other.vertex_lookup);
-    vertices = std::move(other.vertices);
     upstreamDist = other.upstreamDist;
     readLen = other.readLen;
     maxInsertSize = other.maxInsertSize;
     splitFactor = other.splitFactor;
-    other.ownsGraph=false;
+    other.flag &= ~OWNS_GRAPH;
     return *this;
 }
 
 
 //Checks that this object owns its underlying graph and can make changes
 void CBPGraph::assertOwnership() { 
-        if(!ownsGraph) {
+        if(!(flag & OWNS_GRAPH)) {
             throw std::logic_error("Attempt to call non-const function from moved graph");
         }
     }
@@ -161,6 +162,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
 {
     assertOwnership();
     auto key = std::make_pair(proximalPos, distalPos);
+    ensureValidLookup();
     auto it = vertex_lookup.find(key);
 
     if (it != vertex_lookup.end()) {
@@ -168,26 +170,25 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         igraph_integer_t vid = it->second;
         
         // The combined IsSplit is true if either is true
-        vertices[vid].isSplit = vertices[vid].isSplit || isSplit;
+        VertexProps props = this->get_vertex_properties(vid);
+        props.isSplit = props.isSplit || isSplit;
         
         // Append the assocFragments information (delimited by a comma)
-        if (!vertices[vid].assocFragments.empty() && !assocFragments.empty()) {
-            vertices[vid].assocFragments += "," + assocFragments;
+        if (!props.assocFragments.empty() && !assocFragments.empty()) {
+            props.assocFragments += "," + assocFragments;
         } else if (!assocFragments.empty()) {
-            vertices[vid].assocFragments = assocFragments;
+            props.assocFragments = assocFragments;
         }
 
         // Update underlying igraph C attributes
-        SETVAB(&graph, "IsSplit", vid, vertices[vid].isSplit);
-        SETVAS(&graph, "assocFragments", vid, vertices[vid].assocFragments.c_str());
+        SETVAB(&graph, "IsSplit", vid, props.isSplit);
+        SETVAS(&graph, "assocFragments", vid, props.assocFragments.c_str());
     } 
     else {
         // 2. Vertex pair is unique: Create a brand new vertex
         igraph_integer_t new_vid = igraph_vcount(&graph);
         igraph_add_vertices(&graph, 1, nullptr);
 
-        VertexProps props = {new_vid, proximalPos, distalPos, isSplit, assocFragments};
-        vertices.push_back(props);
         vertex_lookup[key] = new_vid;
 
         // Set underlying igraph C attributes
@@ -208,8 +209,8 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
 void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
                                     igraph_integer_t v2_id)
 {
-    const auto& v1 = vertices[v1_id];
-    const auto& v2 = vertices[v2_id];
+    VertexProps v1 = this->get_vertex_properties(v1_id);
+    VertexProps v2 = this->get_vertex_properties(v2_id);
 
     double s1, e1, s2, e2;
     getWindow(v1.proximalPos, v1.isSplit, s1, e1);
@@ -244,9 +245,50 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     }
 }
 
+//Checks if the unique vertex lookup is valid, and rebuilds it if not
+void CBPGraph::ensureValidLookup() {
+    if(flag & VALID_LOOKUP) { return; }
+    vertex_lookup.clear();
+    for(int i = 0; i < this->vcount(); i++){
+        int proxPos = std::lround(VAN(&graph,"ProximalPos",i));
+        int distPos = std::lround(VAN(&graph,"DistalPos",i));
+        vertex_lookup.emplace(std::make_pair(proxPos,distPos),i);
+    }
+    flag |= VALID_LOOKUP;
+}
+
+//Removes vertices which have insufficient support
+//  the degree of the vertex is below some threshold, even 
+//  when providing a bonus for being a split read
+void CBPGraph::filterVertices( double minSupport, double splitBonus) {
+    assertOwnership();
+    std::vector<igraph_int_t> toFilter;
+    for(igraph_int_t i = 0; i < this->vcount(); i++){
+        igraph_int_t degree;
+        igraph_degree_1(&graph,&degree,i,IGRAPH_ALL,igraph_loops_t(false));
+        double support =    1.0 + degree +
+                            (VAB(&graph,"IsSplit",i) ? splitBonus : 0);
+        if(support < minSupport) {
+
+            toFilter.push_back(i);
+        }
+    }
+    if(toFilter.size()){
+        flag &= ~VALID_LOOKUP;
+        igraph_vector_int_t vec;
+        igraph_vector_int_init(&vec,toFilter.size());
+        for(size_t i = 0; i < toFilter.size();i++) {
+            VECTOR(vec)[i] = toFilter[i];
+        }
+        igraph_delete_vertices(&graph, igraph_vss_vector(&vec));
+        igraph_vector_int_destroy(&vec);
+    }
+}
+
+
 // Calculates the window boundaries based on direction (OpensLeft) and split status
 void CBPGraph::getWindow(int proxPos, bool isSplit, double& start, double& end) const {
-    if (!opensLeft) {
+    if (!this->opens_left()) {
         // Upstream is numerically smaller (left), Downstream is numerically higher (right)
         start = proxPos - upstreamDist;
         end = proxPos + (isSplit ? readLen : maxInsertSize);
@@ -264,6 +306,16 @@ void CBPGraph::init_attribute_table() {
         igraph_set_attribute_table(&igraph_cattribute_table);
         initialized = true;
     }
+}
+
+
+VertexProps CBPGraph::get_vertex_properties(int id) const {
+    return {    id,
+                int(std::lround(VAN(&graph,"ProximalPos",id))),
+                int(std::lround(VAN(&graph,"DistalPos",id))),
+                VAB(&graph,"IsSplit",id),
+                VAS(&graph,"assocFragments",id)
+    };
 }
 
 #endif // BREAKPOINT_GRAPH_H
