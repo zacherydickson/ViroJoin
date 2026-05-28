@@ -45,6 +45,7 @@ public:
     enum GRAPH_STATES {
         OWNS_GRAPH = 0x1,
         VALID_LOOKUP = 0x2,
+        VALID_CLIQUES = 0x3,
     };
 // Structure to cache vertex properties internally for quick lookup and manipulation
 struct VertexProps {
@@ -52,7 +53,8 @@ struct VertexProps {
     int proximalPos;
     int distalPos;
     bool isSplit;
-    std::string assocFragments;
+    std::vector<int> cliques;
+    std::vector<std::string> assocFragments;
 };
     //Members
 public:
@@ -94,14 +96,13 @@ public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
     void filterVertices( double minDegree, double splitBonus);
-    std::vector<std::set<int>> maximalCliques(  double minVertex,
-                                                double splitBonus);
+    bool maximalCliques(  double minVertex, double splitBonus);
 private:
     void assertOwnership();
     void BronKerbosh2 ( std::set<igraph_int_t> R,
                         std::set<igraph_int_t> P,
                         std::set<igraph_int_t> X,
-                        std::vector<std::set<int>> & res, int callDepth);
+                        std::vector<std::set<igraph_int_t>> & res) const;
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void ensureValidLookup();
     void getWindow(int proxPos, bool isSplit, double& start, double& end) const;
@@ -185,25 +186,24 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         
         //Construct a string representing the sorted, unique fragment names associated
         //with this vertex
-        std::vector<std::string> fragNames = strsplit(props.assocFragments,dupDelim);
         std::set<std::string> fragNameSet;
-        fragNameSet.insert(fragNames.begin(),fragNames.end());
+        fragNameSet.insert(props.assocFragments.begin(),props.assocFragments.end());
         fragNameSet.insert(assocFragment);
         std::string fragStr = *fragNameSet.begin();
         for(auto it = fragNameSet.begin(); it != fragNameSet.end(); it++){
             if(it == fragNameSet.begin()) { continue; }
             fragStr += dupDelim + *it; 
         }
-        props.assocFragments = fragStr;
 
         // Update underlying igraph C attributes
         SETVAB(&graph, "IsSplit", vid, props.isSplit);
-        SETVAS(&graph, "assocFragments", vid, props.assocFragments.c_str());
+        SETVAS(&graph, "assocFragments", vid, fragStr.c_str());
     } 
     else {
         // 2. Vertex pair is unique: Create a brand new vertex
         igraph_integer_t new_vid = igraph_vcount(&graph);
         igraph_add_vertices(&graph, 1, nullptr);
+        flag &= ~VALID_CLIQUES;
 
         vertex_lookup[key] = new_vid;
 
@@ -211,6 +211,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         SETVAN(&graph, "ProximalPos", new_vid, proximalPos);
         SETVAN(&graph, "DistalPos", new_vid, distalPos);
         SETVAB(&graph, "IsSplit", new_vid, isSplit);
+        SETVAS(&graph, "cliques", new_vid, "");
         SETVAS(&graph, "assocFragments", new_vid, assocFragment.c_str());
 
         // Check against all pre-existing vertices to evaluate edge creations
@@ -290,6 +291,7 @@ void CBPGraph::filterVertices( double minSupport, double splitBonus) {
     }
     if(toFilter.size()){
         flag &= ~VALID_LOOKUP;
+        flag &= ~VALID_CLIQUES;
         igraph_vector_int_t vec;
         igraph_vector_int_init(&vec,toFilter.size());
         for(size_t i = 0; i < toFilter.size();i++) {
@@ -326,13 +328,12 @@ void CBPGraph::init_attribute_table() {
 void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
                                 std::set<igraph_int_t> P,
                                 std::set<igraph_int_t> X,
-                                std::vector<std::set<int>> & res, int callDepth)
+                                std::vector<std::set<igraph_int_t>> & res ) const 
 {
-    std::cerr << callDepth << ") " << R.size() << " " << P.size() << " " << X.size() << "\t" << res.size() << "\n";
     //If there are no more candidate nodes to add
     //this clique is maximal
     if(P.size() + X.size() == 0) {
-        std::set<int> clique;
+        std::set<igraph_int_t> clique;
         clique.insert(R.begin(),R.end());
         res.push_back(clique);
     }
@@ -378,7 +379,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
                                 N.begin(),N.end(),
                                 std::inserter(Xprime,Xprime.end()));
         //Make the recursive call
-        BronKerbosh2(Rprime,Pprime,Xprime,res,callDepth+1);
+        BronKerbosh2(Rprime,Pprime,Xprime,res);
         //remove v from P
         P.erase(v);
         PnonPivot.erase(v);
@@ -387,15 +388,15 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
     }
 }
 
-
-std::vector<std::set<int>> CBPGraph::maximalCliques(    double minVertex,
-                                                        double splitBonus) {
-    std::vector<std::set<int>> cliques;
+//Determines and stores internally all maximal cliques within the current graph
+//Output    - true if there are cliques meeting the criteria, false otherwise
+bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
+    std::vector<std::set<igraph_int_t>> cliques;
     std::set<igraph_int_t> nodeIdx; 
     for(igraph_int_t i = 0; i < this->vcount(); i++){
         nodeIdx.insert(i);
     }
-    this->BronKerbosh2({},nodeIdx,{},cliques,0);
+    this->BronKerbosh2({},nodeIdx,{},cliques);
     for(auto it = cliques.begin(); it != cliques.end(); it++){
         bool bSplit = false;
         for(igraph_int_t id : *it){
@@ -410,16 +411,45 @@ std::vector<std::set<int>> CBPGraph::maximalCliques(    double minVertex,
             it++;
         }
     }
-    return cliques;
+    //Determine all cliques to which a given vertex belongs
+    std::multimap<igraph_int_t,size_t> cliqueMap;
+    for(size_t i = 0; i < cliques.size(); i++){
+        for(igraph_int_t id : cliques[i]) {
+            cliqueMap.insert({id,i});
+        }
+    }
+    //Store the clique information
+    for(igraph_int_t id = 0; id < this->vcount(); id++){
+        //Set the clique to empty for any vertexes not in a valid clique
+        if(!cliqueMap.count(id)) { 
+            SETVAS(&graph,"cliques",id,"");
+            continue;
+        }
+        auto range = cliqueMap.equal_range(id);
+        std::string str= std::to_string(range.first->second);
+        for(auto it = range.first; it != range.second; it++){
+            if(it == range.first) { continue; }
+            str += dupDelim + std::to_string(it->second);
+        }
+        SETVAS(&graph,"cliques",id,str.c_str());
+    }
+    flag |= VALID_CLIQUES;
+    return bool(cliques.size());
 }
 
 
 CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
+    std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),dupDelim);
+    std::vector<int> cliqueAssignVec;
+    for(auto cliqueStr : cliqueStrs){
+        cliqueAssignVec.push_back(std::stoi(cliqueStr));
+    }
     return {    id,
                 int(std::lround(VAN(&graph,"ProximalPos",id))),
                 int(std::lround(VAN(&graph,"DistalPos",id))),
                 VAB(&graph,"IsSplit",id),
-                VAS(&graph,"assocFragments",id)
+                cliqueAssignVec,
+                strsplit(VAS(&graph,"assocFragments",id),dupDelim)
     };
 }
 
