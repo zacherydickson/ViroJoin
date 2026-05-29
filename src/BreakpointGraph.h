@@ -59,7 +59,7 @@ struct VertexProps {
 };
     //Members
 public:
-    static const char dupDelim = 29;
+    static const char DupDelim = 29;
 protected:
     igraph_t graph;
     uint8_t flag;
@@ -206,11 +206,8 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         std::set<std::string> fragNameSet;
         fragNameSet.insert(props.assocFragments.begin(),props.assocFragments.end());
         fragNameSet.insert(assocFragment);
-        std::string fragStr = *fragNameSet.begin();
-        for(auto it = fragNameSet.begin(); it != fragNameSet.end(); it++){
-            if(it == fragNameSet.begin()) { continue; }
-            fragStr += dupDelim + *it; 
-        }
+        std::string fragStr = strjoin(  fragNameSet.begin(),
+                                        fragNameSet.end(), DupDelim);
 
         // Update underlying igraph C attributes
         SETVAB(&graph, "IsSplit", vid, props.isSplit);
@@ -447,7 +444,7 @@ bool CBPGraph::fragsets_are_comparable( std::vector<std::string> fragVec1,
 }
 
 CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
-    std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),dupDelim);
+    std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),DupDelim);
     std::vector<int> cliqueAssignVec;
     for(auto cliqueStr : cliqueStrs){
         cliqueAssignVec.push_back(std::stoi(cliqueStr));
@@ -457,7 +454,7 @@ CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
                 int(std::lround(VAN(&graph,"DistalPos",id))),
                 VAB(&graph,"IsSplit",id),
                 cliqueAssignVec,
-                strsplit(VAS(&graph,"assocFragments",id),dupDelim)
+                strsplit(VAS(&graph,"assocFragments",id),DupDelim)
     };
 }
 
@@ -502,11 +499,12 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
             continue;
         }
         auto range = cliqueMap.equal_range(id);
-        std::string str= std::to_string(range.first->second);
-        for(auto it = range.first; it != range.second; it++){
-            if(it == range.first) { continue; }
-            str += dupDelim + std::to_string(it->second);
-        }
+        std::string str = to_strjoin(
+                range.first, range.second, DupDelim,
+                [](const std::pair<igraph_int_t,size_t> & item){
+                    return std::to_string(item.second);
+                    } );
+
         SETVAS(&graph,"cliques",id,str.c_str());
     }
     flag |= VALID_CLIQUES;
