@@ -61,6 +61,7 @@ public:
 //Accessors
 public:
     igraph_t* get_igraph() { assertOwnership(); return &graph; }
+    std::pair<igraph_int_t,igraph_int_t> get_edge_endpoints(igraph_int_t eid) const;
     EdgeProps get_edge_properties(int id) const;
     VertexProps get_vertex_properties(int id) const;
     int vcount() const { return igraph_vcount(&graph); }
@@ -281,6 +282,19 @@ void CRegionGraph::init_attribute_table() {
         igraph_set_attribute_table(&igraph_cattribute_table);
         initialized = true;
     }
+}
+
+//Returns the vertex id's for the endpoints of an edge
+//Always returns them such that the first vertex is the host vertex
+std::pair<igraph_int_t,igraph_int_t> CRegionGraph::get_edge_endpoints(
+        igraph_int_t eid) const
+{
+    std::pair<igraph_int_t,igraph_int_t> endpoints;
+    igraph_edge(&graph,eid,&endpoints.first,&endpoints.second);
+    if(VAB(&graph,"IsHost",endpoints.second)){
+        std::swap(endpoints.first,endpoints.second);
+    }
+    return endpoints;
 }
 
 CRegionGraph::EdgeProps CRegionGraph::get_edge_properties(int id) const {
