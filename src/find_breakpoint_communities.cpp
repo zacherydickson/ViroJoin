@@ -122,14 +122,32 @@ void OutputRegions( std::string regfname, std::string readfname,
 
 BPGraphMap_t LoadBPGraphs(const std::string & fname);
 void IdentifyCommunities(BPGraphMap_t & graphMap);
+std::string to_bed(CRegionGraph::VertexProps);
 
 //==== MAIN
 
-//Passes over a candidate junction file twice
-//  The first time counts the instances of each junction and puts them into order from most
-//  to least prevalent
-//  Second pass assigns each read to the most prevalent region in range
-//  Finally the regions are filtered by the number of assigned reads and printed
+//Parses candidate junctions into a graph of breakpoint positions in each contig
+// Breakpoints defined by fragments with the same proximal and distal positions
+//  are counted as one breakpoint position (all such fragments for a fragment group)
+// Those are then clustered into regions by identifying maximal cliques
+// Cliques are filtered for minimum size
+// The regions are then used to construct a bipartite graph with edges between host and
+//  viral regions which have fragments associated with both
+// The edges are filtered for minimum support
+// Regions with edges are output to a bed file, with the regionID as the name field
+// Edges are output to a tab delim file:
+//  fragmentName, regionIDHost, regionIDVirus, edgeID, grpIDList
+//  each regIDHost- regionIDVirus combo is associted with one edgeID
+//  a given fragment may occur in multiple fragment groups associated with an edge
+//  the amount of support for an edge is then the number of unique grpIDs associated with that edgeID
+//Inputs - the virus ref name (to differentiate host and viral references)
+//       - the workspace (to find the stats file)
+//       - the working dir (for output and to find the config and junction candidates)
+//Output - A bed file defining the regions associated with any edges
+//       - A tab delim file specifying the edges:
+//          edgeID, hostRegID, virusRegID, edgeMetadata(NFragGrp)
+//       - A tab delim file associating fragments with edges
+//          fragmentName, edgeID , fragmentGrpInEdgeID
 int main(int argc, char* argv[]) {
     //#Parse Inputs
     std::string virus_ref_fname = argv[1];
@@ -141,8 +159,9 @@ int main(int argc, char* argv[]) {
     std::string candidate_file_name = workdir + "/junction-candidates.bedpe";
     std::string config_file_name = workdir + "/config.txt";
     //## Output Files
-    std::string reg_file_name = workdir + "/region-candidates.bed";
-    std::string read_file_name = workdir + "/read_regionMap.tab";
+    std::string regFileName = workdir + "/region-candidates.bed";
+    std::string edgeFileName = workdir + "/edge-candidates.tab";
+    std::string assocFileName = workdir + "/fragment-edge-associations.tab";
 
     LoadVirusNames(virus_ref_fname,VirusNameSet);
 
@@ -160,8 +179,37 @@ int main(int argc, char* argv[]) {
     ClusterBPGraphs(graphMap);
     CRegionGraph regGraph = ConstructRegionGraph(graphMap);
     regGraph.filterEdges(MinimumReads,SplitBonus);
-    //TODO: Output
-
+    // Open output stream 
+    std::ofstream regionBedFile(regFileName);
+    std::ofstream edgeTabFile(edgeFileName);
+    std::ofstream assocTabFile(assocFileName);
+    // Track unique regions
+    std::unordered_set<igraph_int_t> printedVertexSet;
+    for(int eid = 0; eid < regGraph.ecount();eid++){
+        CRegionGraph::EdgeProps prop = regGraph.get_edge_properties(eid);
+        //Output the fragment-edge associations
+        for(const std::string & fragGrp : prop.assocFragGroups) {
+        for(size_t fragGrpIdx = 0; fragGrpIdx < prop.assocFragGroups.size(); fragGrpIdx++) {
+            std::vector<std::string> fragNameVec = strsplit(fragGrp,CRegionGraph::DupDelim);
+            for(const std::string & fragName : fragNameVec){
+                assocTabFile << fragName << "\t" << eid << "\t" << fragGrpIdx << "\n";
+            }
+        }
+        //Get Endpoints of the edge, and the region defining information
+        std::pair<igraph_int_t,igraph_int_t> endpoints =
+            regGraph.get_edge_endpoints(eid);
+        //Output the edge information
+        edgeTabFile << eid << endpoints.first << endpoints.second << prop.weight << "\n";
+        //Output each region
+        CRegionGraph::VertexProps hostRegProp =
+            regGraph.get_vertex_properties(endpoints.first);
+        regionBedFile << to_bed(hostRegProp) << "\n";
+        CRegionGraph::VertexProps virusRegProp =
+            regGraph.get_vertex_properties(endpoints.second);
+        regionBedFile << to_bed(virusRegProp) << "\n";
+        }
+    }
+    
        
     //IdentifyCommunities(graphMap);
 
@@ -188,7 +236,9 @@ bool ClusterBPGraph(CBPGraph & graph) {
 //Output    - None, modifies the input
 void ClusterBPGraphs(BPGraphMap_t & graphMap) {
     fprintf(stderr,"Clustering fragments within graphs ...\n");
+    int counter = 0;
     for(auto it = graphMap.begin(); it != graphMap.end(); ){
+        std::cerr << counter << "\n";
         if(ClusterBPGraph(it->second)){ 
             it++;
         } else {
@@ -212,10 +262,9 @@ CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap) {
         for(igraph_int_t id = 0; id < graph.vcount(); id++){
             CBPGraph::VertexProps fragGrpProp = graph.get_vertex_properties(id);
             //Construct a fragment Group String compatible with CRegionGraphs
-            std::string fragGrpStr = fragGrpProp.assocFragments.front();
-            for(size_t i = 1; i <= fragGrpProp.assocFragments.size(); i++){
-                fragGrpStr += CRegionGraph::dupDelim + fragGrpProp.assocFragments[i];
-            }
+            std::string fragGrpStr = strjoin(   fragGrpProp.assocFragments.begin(),
+                                                fragGrpProp.assocFragments.end(),
+                                                CRegionGraph::DupDelim);
             size_t left = std::min(fragGrpProp.proximalPos,fragGrpProp.distalPos);
             size_t right = std::max(fragGrpProp.proximalPos,fragGrpProp.distalPos);
             //Iterate over cliques for this id
@@ -584,16 +633,35 @@ BPGraphMap_t LoadBPGraphs(const std::string & fname) {
                                 UpstreamSize, ReadLength,
                                 MaxInsertSize, SplitFactor);
                graphByContig.insert({contig, std::move(graph)}); 
+               graphByContig.at(contig).assertOwnership();
             }
             CBPGraph & graph = graphByContig.at(contig);
+            graphByContig.at(contig).assertOwnership();
+            graph.assertOwnership();
             graph.addOrUpdateVertex( frag.proximal_pos(ivIdx),
                                      frag.distal_pos(ivIdx),
                                      frag.is_split(ivIdx),
                                      frag.getName());
+            graph.assertOwnership();
         }
     }
     std::cerr << "Loaded " << graphByContig.size() << " graphs\n";
     return graphByContig;
+}
+
+//Takes a set of vertex properties defining a region, and constructs a bed formated string
+std::string to_bed(CRegionGraph::VertexProps props) {
+    std::string bed = props.chromosome;
+    bed += '\t' + std::to_string(props.left);
+    bed += '\t' + std::to_string(props.right);
+    bed += '\t' + std::to_string(props.id);
+    uint16_t flag = (ChimericFragment_t::HAS_INTERVAL);
+    flag |= (props.opensLeft) ? ChimericFragment_t::OPENS_LEFT : 0;
+    flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
+    flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
+    bed += '\t' + std::to_string(int(flag));
+    bed += '\t' + ((props.opensLeft == props.isHost) ? "-" : "+");
+    return bed;
 }
 
 //NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel

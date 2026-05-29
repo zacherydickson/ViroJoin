@@ -46,7 +46,7 @@ public:
     enum GRAPH_STATES {
         OWNS_GRAPH = 0x1,
         VALID_LOOKUP = 0x2,
-        VALID_CLIQUES = 0x3,
+        VALID_CLIQUES = 0x4,
     };
 // Structure to cache vertex properties internally for quick lookup and manipulation
 struct VertexProps {
@@ -94,12 +94,12 @@ public:
     int ecount() const { return igraph_ecount(&graph); }
 //Methods:
 public:
+    void assertOwnership() const;
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
 private:
-    void assertOwnership();
     void BronKerbosh2 ( std::set<igraph_int_t> R,
                         std::set<igraph_int_t> P,
                         std::set<igraph_int_t> X,
@@ -172,7 +172,7 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
 
 
 //Checks that this object owns its underlying graph and can make changes
-void CBPGraph::assertOwnership() { 
+void CBPGraph::assertOwnership() const { 
     if(!(flag & OWNS_GRAPH)) {
         throw std::logic_error("Attempt to call non-const function from moved graph");
     }
@@ -247,6 +247,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         nonAdjVertices.resize(vid);
         std::iota(nonAdjVertices.begin(),nonAdjVertices.end(),0);
     }
+
     //Regardless of whether a new vertex was added, new edges may be formed
     //  OR
     // (AB vs A (no-independent support) becomes AB vs AC (independent support)
@@ -255,6 +256,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
     for (igraph_integer_t old_vid : nonAdjVertices) {
         checkAndCreateEdge(old_vid, vid);
     }
+
 }
 
 void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
@@ -262,6 +264,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
                                 std::set<igraph_int_t> X,
                                 std::vector<std::set<igraph_int_t>> & res ) const 
 {
+    std::cerr << R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << res.size() << "\n"; 
     //If there are no more candidate nodes to add
     //this clique is maximal
     if(P.size() + X.size() == 0) {
@@ -272,8 +275,9 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
     if(!P.size()) { return; }
     std::set<igraph_int_t> Q;
     //The pivot index returned is discarded
-    this->selectPivot(P,Q);
+    igraph_int_t pivot = this->selectPivot(P,Q);
     for( igraph_int_t v : Q) {
+        std::cerr << "InLOOP w pivot: " << pivot << "\t" <<  R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << Q.size() << "\t"<< res.size() << "\n"; 
         //Identify neighbours (N) of the vertex
         igraph_vs_t vs; // The concept of picking vertices in a graph
         igraph_vit_t vit; // The selection of verteces in this graph
@@ -311,6 +315,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
 void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
                                     igraph_integer_t v2_id)
 {
+    assertOwnership();
     VertexProps v1 = this->get_vertex_properties(v1_id);
     VertexProps v2 = this->get_vertex_properties(v2_id);
 
@@ -418,6 +423,7 @@ void CBPGraph::getWindow(int proxPos, bool isSplit, double& start, double& end) 
 
 // Initializes the igraph C attribute table (must be called once before using attributes)
 void CBPGraph::init_attribute_table() {
+    assertOwnership();
     static bool initialized = false;
     if (!initialized) {
         igraph_set_attribute_table(&igraph_cattribute_table);
@@ -464,6 +470,7 @@ CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
 //Determines and stores internally all maximal cliques within the current graph
 //Output    - true if there are cliques meeting the criteria, false otherwise
 bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
+    assertOwnership();
     std::vector<std::set<igraph_int_t>> cliques;
     std::set<igraph_int_t> nodeIdx; 
     for(igraph_int_t i = 0; i < this->vcount(); i++){
@@ -514,6 +521,7 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
 
 
 void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
+    assertOwnership();
     //Edge Selector for all edges on this vertex
     igraph_es_t es;
     igraph_es_incident(&es,vid,IGRAPH_ALL,IGRAPH_NO_LOOPS);
@@ -546,8 +554,9 @@ void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
 igraph_int_t CBPGraph::selectPivot( const std::set<igraph_int_t> & P,
                                     std::set<igraph_int_t> &symDiff) const
 {
+    std::cerr << "Sececting pivot: " << P.size() << "\n";
     symDiff = P;
-    igraph_int_t bestPivot = -1;
+    igraph_int_t bestPivot = *P.begin();
     for(igraph_int_t pivot : P){
         //Identify neighbours (N) of the pivot, and remove them from P
         igraph_vs_t vs; // The concept of picking vertices in a graph
