@@ -38,10 +38,11 @@ struct EdgeProps {
     bool fromSplit;
     std::vector<std::string> assocFragGroups;
 };
+
     //Members
 public:
     static const char DupDelim = 29;
-    static const char fragDelim = 30;
+    static const char FragDelim = 30;
 protected:
     igraph_t graph;
     uint8_t flag;
@@ -78,6 +79,8 @@ private:
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void ensureValidLookup();
     void init_attribute_table();
+    static std::vector<std::string> intersectFragmentGroups(
+            std::vector<std::string>, std::vector<std::string>);
 };
 
 //DEFINITIONS
@@ -149,10 +152,8 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
         }
     }
 
-    std::string assocFragStr = assocFragGroups.front();
-    for(size_t i = 1; i <= assocFragGroups.size(); i++){
-        assocFragStr += "\t" + assocFragGroups[i];
-    }
+    std::string assocFragStr = strjoin( assocFragGroups.begin(),
+                                        assocFragGroups.end(), FragDelim);
 
     // Set underlying igraph C attributes
     SETVAS(&graph, "Chromosome", new_vid, chromosome.c_str());
@@ -196,16 +197,15 @@ void CRegionGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     igraph_integer_t new_eid = igraph_ecount(&graph);
     igraph_add_edge(&graph, v1_id, v2_id);
 
-    std::set<std::string> theIntersect;
-    std::set_intersection(  v1.assocFragGroups.begin(),v2.assocFragGroups.end(),
-                            v2.assocFragGroups.begin(),v2.assocFragGroups.end(),
-                            std::inserter(theIntersect,theIntersect.end()));
-    std::string assocFrag = *theIntersect.begin();
-    for(auto it = theIntersect.begin(); it != theIntersect.end(); it++){
-        if( it == theIntersect.begin()) { continue; }
-        assocFrag += fragDelim + *it;
-    }
-    SETEAN(&graph, "weight", new_eid, theIntersect.size());
+    std::vector<std::string> fGSVec = CRegionGraph::intersectFragmentGroups(
+                                        v1.assocFragGroups,v2.assocFragGroups);
+
+    //No shared fragment groups 
+    if(!fGSVec.size()){ return; }
+
+    std::string assocFrag = strjoin(fGSVec.begin(), fGSVec.end(), FragDelim);
+
+    SETEAN(&graph, "weight", new_eid, fGSVec.size());
     SETEAN(&graph, "fromSplit", new_eid, v1.fromSplit || v2.fromSplit);
     SETEAS(&graph, "assocFragGrp", new_eid, assocFrag.c_str());
 }
@@ -215,7 +215,7 @@ void CRegionGraph::ensureValidLookup() {
     if(flag & VALID_LOOKUP) { return; }
     vertex_by_fragment.clear();
     for(int i = 0; i < this->vcount(); i++){
-        for(std::string fragGrp : strsplit(VAS(&graph,"assocFragGrps",i),fragDelim)){
+        for(std::string fragGrp : strsplit(VAS(&graph,"assocFragGrps",i),FragDelim)){
             for( std::string fragName : strsplit(fragGrp,DupDelim)){
                 vertex_by_fragment.insert({fragName,i});
             }
@@ -284,6 +284,44 @@ void CRegionGraph::init_attribute_table() {
     }
 }
 
+
+
+std::vector<std::string> CRegionGraph::intersectFragmentGroups(
+        std::vector<std::string> fg1 , std::vector<std::string> fg2)
+{
+    std::map<std::string,std::pair<std::set<size_t>,std::set<size_t>>> profileByFragMap;
+    //Construct the profiles for each fragment
+    const std::vector<std::string> * fg_ptr[2] = {&fg1,&fg2};
+    for(int i = 0; i < 2; i++){
+       for(size_t grIdx = 0; grIdx < fg_ptr[i]->size(); grIdx++){
+           for(const std::string & frag :
+                   strsplit((*fg_ptr[i])[grIdx],CRegionGraph::DupDelim))
+           {
+                if(i == 0){
+                    profileByFragMap[frag].first.insert(grIdx);
+                } else {
+                    profileByFragMap[frag].second.insert(grIdx);
+                }
+           }
+       }
+    }
+    //Group Fragments with the same profile together
+    std::map<std::pair<std::set<size_t>,std::set<size_t>>,std::set<std::string>> fragGrpByProfileMap;
+    for( const auto & pair : profileByFragMap ){
+        //ensure that the fragment appears in at least one fragGroup in both regions
+        if(pair.second.first.size() * pair.second.second.size() > 0){
+            fragGrpByProfileMap[pair.second].insert(pair.first);
+        }
+    }
+    std::vector<std::string> fragGroupStrVec;
+    for( const auto & pair : fragGrpByProfileMap){
+        fragGroupStrVec.push_back( strjoin( pair.second.begin(),
+                                            pair.second.end(),
+                                            CRegionGraph::DupDelim) );
+    }
+    return fragGroupStrVec;
+}
+
 //Returns the vertex id's for the endpoints of an edge
 //Always returns them such that the first vertex is the host vertex
 std::pair<igraph_int_t,igraph_int_t> CRegionGraph::get_edge_endpoints(
@@ -301,7 +339,7 @@ CRegionGraph::EdgeProps CRegionGraph::get_edge_properties(int id) const {
     return {    id,
                 EAN(&graph,"weight",id),
                 EAB(&graph,"FromSplit",id),
-                strsplit(EAS(&graph,"assocFragGrps",id),fragDelim)
+                strsplit(EAS(&graph,"assocFragGrps",id),FragDelim)
     };
 }
 
@@ -313,7 +351,7 @@ CRegionGraph::VertexProps CRegionGraph::get_vertex_properties(int id) const {
                 VAB(&graph,"IsHost",id),
                 size_t(std::lround(VAN(&graph,"Left",id))),
                 size_t(std::lround(VAN(&graph,"Right",id))),
-                strsplit(VAS(&graph,"assocFragGrps",id),fragDelim)
+                strsplit(VAS(&graph,"assocFragGrps",id),FragDelim)
     };
 }
 
