@@ -31,6 +31,7 @@ Could you write c++ code that matches this specification?
 #include "igraph/igraph.h"
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <stdexcept>
 #include <set>
 #include <string>
@@ -105,8 +106,21 @@ private:
                         std::vector<std::set<igraph_int_t>> & res) const;
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void ensureValidLookup();
+    static bool fragsets_are_comparable(    std::vector<std::string> fragVec1,
+                                            std::vector<std::string> fragVec2);
     void getWindow(int proxPos, bool isSplit, double& start, double& end) const;
     void init_attribute_table();
+    void removeSharedFragEdges(std::string frag, igraph_int_t vid);
+    igraph_int_t selectPivot(   const std::set<igraph_int_t> & P,
+                                std::set<igraph_int_t> &symDiff) const;
+    bool vertexesHaveIndependentSupport(    igraph_int_t vid1,
+                                            igraph_int_t vid2 ) const 
+    {
+        return  !CBPGraph::fragsets_are_comparable(
+                    this->get_vertex_properties(vid1).assocFragments,
+                    this->get_vertex_properties(vid1).assocFragments
+                );
+    }
 };
 
 //DEFINITIONS
@@ -159,10 +173,10 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
 
 //Checks that this object owns its underlying graph and can make changes
 void CBPGraph::assertOwnership() { 
-        if(!(flag & OWNS_GRAPH)) {
-            throw std::logic_error("Attempt to call non-const function from moved graph");
-        }
+    if(!(flag & OWNS_GRAPH)) {
+        throw std::logic_error("Attempt to call non-const function from moved graph");
     }
+}
 
 /**
      * Adds a vertex if the (proximalPos, distalPos) pair is unique.
@@ -176,9 +190,12 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
     ensureValidLookup();
     auto it = vertex_lookup.find(key);
 
+    igraph_int_t vid = igraph_vcount(&graph);
+
+    std::vector<igraph_int_t> nonAdjVertices;
     if (it != vertex_lookup.end()) {
         // 1. Vertex pair already exists: Merge data into the existing vertex
-        igraph_integer_t vid = it->second;
+        vid = it->second;
         
         // The combined IsSplit is true if either is true
         VertexProps props = this->get_vertex_properties(vid);
@@ -198,26 +215,97 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         // Update underlying igraph C attributes
         SETVAB(&graph, "IsSplit", vid, props.isSplit);
         SETVAS(&graph, "assocFragments", vid, fragStr.c_str());
+
+        //Collect all verticies currently not adjacent to this one
+        igraph_vs_t vs;
+        igraph_vs_nonadj(&vs,vid,IGRAPH_ALL);
+        igraph_vit_t vit;
+        igraph_vit_create(&graph,vs,&vit);
+        while(!IGRAPH_VIT_END(vit)){
+            nonAdjVertices.push_back(IGRAPH_VIT_GET(vit));
+            IGRAPH_VIT_NEXT(vit);
+        }
+        igraph_vit_destroy(&vit);
+        igraph_vs_destroy(&vs);
+
+        //Remove any edges attached to this vertex which connect
+        // to a vertex which now no longer has idependent support
+        // A vs B (independent) -> A vs AB (not independent)
+        this->removeSharedFragEdges(assocFragment,vid);
     } 
     else {
         // 2. Vertex pair is unique: Create a brand new vertex
-        igraph_integer_t new_vid = igraph_vcount(&graph);
         igraph_add_vertices(&graph, 1, nullptr);
         flag &= ~VALID_CLIQUES;
 
-        vertex_lookup[key] = new_vid;
+        vertex_lookup[key] = vid;
 
         // Set underlying igraph C attributes
-        SETVAN(&graph, "ProximalPos", new_vid, proximalPos);
-        SETVAN(&graph, "DistalPos", new_vid, distalPos);
-        SETVAB(&graph, "IsSplit", new_vid, isSplit);
-        SETVAS(&graph, "cliques", new_vid, "");
-        SETVAS(&graph, "assocFragments", new_vid, assocFragment.c_str());
+        SETVAN(&graph, "ProximalPos", vid, proximalPos);
+        SETVAN(&graph, "DistalPos", vid, distalPos);
+        SETVAB(&graph, "IsSplit", vid, isSplit);
+        SETVAS(&graph, "cliques", vid, "");
+        SETVAS(&graph, "assocFragments", vid, assocFragment.c_str());
 
-        // Check against all pre-existing vertices to evaluate edge creations
-        for (igraph_integer_t old_vid = 0; old_vid < new_vid; ++old_vid) {
-            checkAndCreateEdge(old_vid, new_vid);
+        nonAdjVertices.resize(vid);
+        std::iota(nonAdjVertices.begin(),nonAdjVertices.end(),0);
+    }
+    //Regardless of whether a new vertex was added, new edges may be formed
+    //  OR
+    // (AB vs A (no-independent support) becomes AB vs AC (independent support)
+    // Check against all pre-existing non-adjacent vertices to
+    // evaluate edge creation
+    for (igraph_integer_t old_vid : nonAdjVertices) {
+        checkAndCreateEdge(old_vid, vid);
+    }
+}
+
+void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
+                                std::set<igraph_int_t> P,
+                                std::set<igraph_int_t> X,
+                                std::vector<std::set<igraph_int_t>> & res ) const 
+{
+    //If there are no more candidate nodes to add
+    //this clique is maximal
+    if(P.size() + X.size() == 0) {
+        std::set<igraph_int_t> clique;
+        clique.insert(R.begin(),R.end());
+        res.push_back(clique);
+    }
+    if(!P.size()) { return; }
+    std::set<igraph_int_t> Q;
+    //The pivot index returned is discarded
+    this->selectPivot(P,Q);
+    for( igraph_int_t v : Q) {
+        //Identify neighbours (N) of the vertex
+        igraph_vs_t vs; // The concept of picking vertices in a graph
+        igraph_vit_t vit; // The selection of verteces in this graph
+        igraph_vs_adj(&vs,v,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
+        igraph_vit_create(&graph, vs, &vit);
+        std::set<igraph_int_t> N;
+        while(!IGRAPH_VIT_END(vit)) {
+            N.insert(IGRAPH_VIT_GET(vit));
+            IGRAPH_VIT_NEXT(vit);
         }
+        igraph_vit_destroy(&vit);
+        igraph_vs_destroy(&vs);
+        //Get the updated sets as R + v, Intersect(P,N) and Intersect (X,N)
+        std::set<igraph_int_t> Rprime = R;
+        Rprime.insert(v);
+        std::set<igraph_int_t> Pprime;
+        std::set<igraph_int_t> Xprime;
+        std::set_intersection(  P.begin(),P.end(),
+                                N.begin(),N.end(),
+                                std::inserter(Pprime,Pprime.end()));
+        std::set_intersection(  X.begin(),X.end(),
+                                N.begin(),N.end(),
+                                std::inserter(Xprime,Xprime.end()));
+        //Make the recursive call
+        BronKerbosh2(Rprime,Pprime,Xprime,res);
+        //remove v from P
+        P.erase(v);
+        //add v to x
+        X.insert(v);
     }
 }
 
@@ -228,6 +316,21 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
 {
     VertexProps v1 = this->get_vertex_properties(v1_id);
     VertexProps v2 = this->get_vertex_properties(v2_id);
+
+    //If the sopport for two separate breakpoint is a completely overlapping set
+    //  of fragments (alt-mappings of the same fragment),
+    //  then they cannot support the same
+    //  breakpoint, and therefore no edge should be made
+    if(CBPGraph::fragsets_are_comparable(v1.assocFragments,v2.assocFragments)){
+        return;
+    }
+    std::set<std::string> fragIntersect;
+    std::set_intersection(  v1.assocFragments.begin(),v1.assocFragments.end(),
+                            v2.assocFragments.begin(),v2.assocFragments.end(),
+                            std::inserter(fragIntersect,fragIntersect.end()) );
+    if(fragIntersect.size()){
+        return;
+    }
 
     double s1, e1, s2, e2;
     getWindow(v1.proximalPos, v1.isSplit, s1, e1);
@@ -325,69 +428,42 @@ void CBPGraph::init_attribute_table() {
     }
 }
 
-void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
-                                std::set<igraph_int_t> P,
-                                std::set<igraph_int_t> X,
-                                std::vector<std::set<igraph_int_t>> & res ) const 
-{
-    //If there are no more candidate nodes to add
-    //this clique is maximal
-    if(P.size() + X.size() == 0) {
-        std::set<igraph_int_t> clique;
-        clique.insert(R.begin(),R.end());
-        res.push_back(clique);
+
+
+//Note: it is assumed that the fragments vectors are sorted
+bool CBPGraph::fragsets_are_comparable( std::vector<std::string> fragVec1,
+                                        std::vector<std::string> fragVec2)
+{ 
+    //If both are empty they are comparable
+    if(fragVec1.size() == fragVec2.size() && !fragVec1.size()) return true;
+    //Determine the smaller vector
+    std::vector<std::string> * smaller = &fragVec1;
+    std::vector<std::string> * larger = &fragVec2;
+    if(fragVec1.size() < fragVec2.size()){
+        std::swap(fragVec1,fragVec2);
     }
-    if(!P.size()) { return; }
-    //Select a pivot //TODO Do it smarter
-    igraph_int_t pivot = *P.begin();
-    //Identify neighbours (N) of the pivot, and remove them from P
-    igraph_vs_t vs; // The concept of picking vertices in a graph
-    igraph_vit_t vit; // The selection of verteces in this graph
-    igraph_vs_adj(&vs,pivot,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
-    igraph_vit_create(&graph, vs, &vit);
-    std::set<igraph_int_t> PnonPivot = P;
-    while(!IGRAPH_VIT_END(vit)) {
-        PnonPivot.erase(IGRAPH_VIT_GET(vit));
-        IGRAPH_VIT_NEXT(vit);
-    }
-    igraph_vit_destroy(&vit);
-    igraph_vs_destroy(&vs);
-    std::cerr << "\t" << P.size() << "\n";
-    while(PnonPivot.size()){
-        igraph_int_t v = *P.begin();
-        //Identify neighbours (N) of the vertex
-        igraph_vs_t vs; // The concept of picking vertices in a graph
-        igraph_vit_t vit; // The selection of verteces in this graph
-        igraph_vs_adj(&vs,v,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
-        igraph_vit_create(&graph, vs, &vit);
-        std::set<igraph_int_t> N;
-        while(!IGRAPH_VIT_END(vit)) {
-            N.insert(IGRAPH_VIT_GET(vit));
-            IGRAPH_VIT_NEXT(vit);
-        }
-        igraph_vit_destroy(&vit);
-        igraph_vs_destroy(&vs);
-        //Get the updated sets as R + v, Intersect(P,N) and Intersect (X,N)
-        std::set<igraph_int_t> Rprime = R;
-        Rprime.insert(v);
-        std::set<igraph_int_t> Pprime;
-        std::set<igraph_int_t> Xprime;
-        std::set_intersection(  P.begin(),P.end(),
-                                N.begin(),N.end(),
-                                std::inserter(Pprime,Pprime.end()));
-        std::set_intersection(  X.begin(),X.end(),
-                                N.begin(),N.end(),
-                                std::inserter(Xprime,Xprime.end()));
-        //Make the recursive call
-        BronKerbosh2(Rprime,Pprime,Xprime,res);
-        //remove v from P
-        P.erase(v);
-        PnonPivot.erase(v);
-        //add v to x
-        X.insert(v);
-    }
+    return std::includes(   larger->begin(),larger->end(),
+                            smaller->begin(),smaller->end());
 }
 
+CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
+    std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),dupDelim);
+    std::vector<int> cliqueAssignVec;
+    for(auto cliqueStr : cliqueStrs){
+        cliqueAssignVec.push_back(std::stoi(cliqueStr));
+    }
+    return {    id,
+                int(std::lround(VAN(&graph,"ProximalPos",id))),
+                int(std::lround(VAN(&graph,"DistalPos",id))),
+                VAB(&graph,"IsSplit",id),
+                cliqueAssignVec,
+                strsplit(VAS(&graph,"assocFragments",id),dupDelim)
+    };
+}
+
+//Note, edges do not exist between vertexes formed from alternate mappings of
+//  the same fragment, therefore any fragment will appear within a clique, just
+//  once
 //Determines and stores internally all maximal cliques within the current graph
 //Output    - true if there are cliques meeting the criteria, false otherwise
 bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
@@ -438,19 +514,63 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
 }
 
 
-CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
-    std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),dupDelim);
-    std::vector<int> cliqueAssignVec;
-    for(auto cliqueStr : cliqueStrs){
-        cliqueAssignVec.push_back(std::stoi(cliqueStr));
+
+void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
+    //Edge Selector for all edges on this vertex
+    igraph_es_t es;
+    igraph_es_incident(&es,vid,IGRAPH_ALL,IGRAPH_NO_LOOPS);
+    igraph_eit_t eit;
+    igraph_eit_create(&graph,es, &eit);
+    //Iterate over edges and find vertices sharing the fragment
+    std::set<igraph_int_t> toRemove;
+    while(!IGRAPH_EIT_END(eit)){
+        igraph_int_t other_vid = IGRAPH_OTHER(&graph,IGRAPH_EIT_GET(eit),vid);
+        if(!this->vertexesHaveIndependentSupport(vid,other_vid)) {
+                toRemove.insert(IGRAPH_EIT_GET(eit));
+        }
+        IGRAPH_EIT_NEXT(eit);
     }
-    return {    id,
-                int(std::lround(VAN(&graph,"ProximalPos",id))),
-                int(std::lround(VAN(&graph,"DistalPos",id))),
-                VAB(&graph,"IsSplit",id),
-                cliqueAssignVec,
-                strsplit(VAS(&graph,"assocFragments",id),dupDelim)
-    };
+    //Remove noted edges if there are any
+    if(toRemove.size()) {
+        igraph_vector_int_t vec;
+        igraph_vector_int_init(&vec,toRemove.size());
+        int i = 0;
+        for(igraph_int_t id : toRemove){
+            VECTOR(vec)[i++] = id;
+        }
+        igraph_delete_edges(&graph,igraph_ess_vector(&vec));
+        igraph_vector_int_destroy(&vec);
+    }
+    igraph_eit_destroy(&eit);
+    igraph_es_destroy(&es);
 }
+
+igraph_int_t CBPGraph::selectPivot( const std::set<igraph_int_t> & P,
+                                    std::set<igraph_int_t> &symDiff) const
+{
+    symDiff = P;
+    igraph_int_t bestPivot = -1;
+    for(igraph_int_t pivot : P){
+        //Identify neighbours (N) of the pivot, and remove them from P
+        igraph_vs_t vs; // The concept of picking vertices in a graph
+        igraph_vit_t vit; // The selection of verteces in this graph
+        igraph_vs_adj(&vs,pivot,IGRAPH_ALL,IGRAPH_NO_LOOPS, IGRAPH_NO_MULTIPLE);
+        igraph_vit_create(&graph, vs, &vit);
+        std::set<igraph_int_t> PnonPivot = P;
+        while(!IGRAPH_VIT_END(vit)) {
+            PnonPivot.erase(IGRAPH_VIT_GET(vit));
+            IGRAPH_VIT_NEXT(vit);
+        }
+        igraph_vit_destroy(&vit);
+        igraph_vs_destroy(&vs);
+        if(PnonPivot.size() < symDiff.size()){
+            bestPivot = pivot;
+            symDiff = std::move(PnonPivot);
+        }
+    }
+    return bestPivot;
+}
+
+
 
 #endif // BREAKPOINT_GRAPH_H
