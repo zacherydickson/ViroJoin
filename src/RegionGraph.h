@@ -40,7 +40,7 @@ struct EdgeProps {
 };
     //Members
 public:
-    static const char dupDelim = 29;
+    static const char DupDelim = 29;
     static const char fragDelim = 30;
 protected:
     igraph_t graph;
@@ -138,7 +138,7 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
     //Get the set of old verticies which also have these fragments
     std::set<igraph_int_t> vertexWithFragmentSet;
     for(auto & fragGrp : assocFragGroups) {
-        for(std::string frag : strsplit(fragGrp,dupDelim)) {
+        for(std::string frag : strsplit(fragGrp,DupDelim)) {
             auto range = vertex_by_fragment.equal_range(frag);
             for(auto i = range.first; i != range.second; i++){
                 vertexWithFragmentSet.insert(i->second);
@@ -215,7 +215,7 @@ void CRegionGraph::ensureValidLookup() {
     vertex_by_fragment.clear();
     for(int i = 0; i < this->vcount(); i++){
         for(std::string fragGrp : strsplit(VAS(&graph,"assocFragGrps",i),fragDelim)){
-            for( std::string fragName : strsplit(fragGrp,dupDelim)){
+            for( std::string fragName : strsplit(fragGrp,DupDelim)){
                 vertex_by_fragment.insert({fragName,i});
             }
         }
