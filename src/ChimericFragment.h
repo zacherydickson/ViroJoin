@@ -48,6 +48,13 @@ class ChimericFragment_t {
         end(other.end), flag(other.flag) 
     {
     }
+    ChimericFragment_t( const std::string & n,
+                        const std::array<std::string,2> & c,
+                        const std::array<size_t,2> & o,
+                        const std::array<size_t,2> & e,
+                        const std::array<uint16_t,2> & f ) :
+        name(n), chr(c), off(o), end(e), flag(f)
+    {}
     //Accessors
     protected:
     bool both(INFOFLAGBIT bit) const {
@@ -99,25 +106,7 @@ class ChimericFragment_t {
     int dominant_comparison (const ChimericFragment_t & other) const;
     std::string to_bedpe(bool bitflag = false) const ;
     //Static Methods
-    static ChimericFragment_t from_bedpe(const std::string bedpe) {
-        auto fields = strsplit(bedpe,'\t');
-        if(fields.size() < 8){
-            throw std::invalid_argument("Attempt to construct Chimeric Fragment from incomplete bedpe entry");
-        }
-        ChimericFragment_t frag(fields[6]);
-        frag.chr = {fields[0],fields[3]};
-        size_t vals[5];
-        int idx = 0;
-        for(int i : {1,2,4,5,7}) {
-            vals[idx++] = (fields[i] == ".") ? 0 : std::stoul(fields[i]);
-        }
-        frag.off = {vals[0],vals[1]};
-        frag.end = {vals[2],vals[3]};
-        frag.flag = {   uint16_t(vals[4] >> (FLAG_BITS + 1)),
-                        uint16_t(vals[4] & ((1 << FLAG_BITS) - 1))
-        };
-        return frag;
-    }
+    static ChimericFragment_t from_bedpe(const std::string bedpe);
 };
 
 //Output - true if the alignment was successfully added, false otherwise
@@ -328,6 +317,26 @@ int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) c
     }
     //They are incomparable
     return 0;
+}
+
+ChimericFragment_t ChimericFragment_t::from_bedpe(const std::string bedpe) {
+    auto fields = strsplit(bedpe,'\t');
+    if(fields.size() < 8){
+        throw std::invalid_argument("Attempt to construct Chimeric Fragment from incomplete bedpe entry");
+    }
+    ChimericFragment_t frag(fields[6]);
+    frag.chr = {fields[0],fields[3]};
+    size_t vals[5];
+    int idx = 0;
+    for(int i : {1,2,4,5,7}) {
+        vals[idx++] = (fields[i] == ".") ? 0 : std::stoul(fields[i]);
+    }
+    frag.off = {vals[0],vals[1]};
+    frag.end = {vals[2],vals[3]};
+    frag.flag = {   uint16_t(vals[4] >> (FLAG_BITS + 1)),
+                    uint16_t(vals[4] & ((1 << FLAG_BITS) - 1))
+    };
+    return frag;
 }
 
 size_t ChimericFragment_t::n_split() const {
