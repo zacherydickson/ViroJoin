@@ -331,8 +331,8 @@ ChimericFragment_t ChimericFragment_t::from_bedpe(const std::string bedpe) {
     for(int i : {1,2,4,5,7}) {
         vals[idx++] = (fields[i] == ".") ? 0 : std::stoul(fields[i]);
     }
-    frag.off = {vals[0],vals[1]};
-    frag.end = {vals[2],vals[3]};
+    frag.off = {vals[0],vals[2]};
+    frag.end = {vals[1],vals[3]};
     frag.flag = {   uint16_t(vals[4] >> (FLAG_BITS + 1)),
                     uint16_t(vals[4] & ((1 << FLAG_BITS) - 1))
     };
