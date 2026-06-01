@@ -94,12 +94,15 @@ public:
     int ecount() const { return igraph_ecount(&graph); }
 //Methods:
 public:
-    void assertOwnership() const;
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments);
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
+    void write_edgelist(FILE * outstream) {
+        igraph_write_graph_edgelist(&graph,outstream);
+    }
 private:
+    void assertOwnership() const;
     void BronKerbosh2 ( std::set<igraph_int_t> R,
                         std::set<igraph_int_t> P,
                         std::set<igraph_int_t> X,
@@ -228,7 +231,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         //Remove any edges attached to this vertex which connect
         // to a vertex which now no longer has idependent support
         // A vs B (independent) -> A vs AB (not independent)
-        this->removeSharedFragEdges(assocFragment,vid);
+        //this->removeSharedFragEdges(assocFragment,vid);
     } 
     else {
         // 2. Vertex pair is unique: Create a brand new vertex
@@ -323,16 +326,16 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     //  of fragments (alt-mappings of the same fragment),
     //  then they cannot support the same
     //  breakpoint, and therefore no edge should be made
-    if(CBPGraph::fragsets_are_comparable(v1.assocFragments,v2.assocFragments)){
-        return;
-    }
-    std::set<std::string> fragIntersect;
-    std::set_intersection(  v1.assocFragments.begin(),v1.assocFragments.end(),
-                            v2.assocFragments.begin(),v2.assocFragments.end(),
-                            std::inserter(fragIntersect,fragIntersect.end()) );
-    if(fragIntersect.size()){
-        return;
-    }
+    //if(CBPGraph::fragsets_are_comparable(v1.assocFragments,v2.assocFragments)){
+    //    return;
+    //}
+    //std::set<std::string> fragIntersect;
+    //std::set_intersection(  v1.assocFragments.begin(),v1.assocFragments.end(),
+    //                        v2.assocFragments.begin(),v2.assocFragments.end(),
+    //                        std::inserter(fragIntersect,fragIntersect.end()) );
+    //if(fragIntersect.size()){
+    //    return;
+    //}
 
     double s1, e1, s2, e2;
     getWindow(v1.proximalPos, v1.isSplit, s1, e1);
