@@ -267,7 +267,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
                                 std::set<igraph_int_t> X,
                                 std::vector<std::set<igraph_int_t>> & res ) const 
 {
-    std::cerr << R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << res.size() << "\n"; 
+    //std::cerr << R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << res.size() << "\n"; 
     //If there are no more candidate nodes to add
     //this clique is maximal
     if(P.size() + X.size() == 0) {
@@ -280,7 +280,7 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
     //The pivot index returned is discarded
     igraph_int_t pivot = this->selectPivot(P,Q);
     for( igraph_int_t v : Q) {
-        std::cerr << "InLOOP w pivot: " << pivot << "\t" <<  R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << Q.size() << "\t"<< res.size() << "\n"; 
+        //std::cerr << "InLOOP w pivot: " << pivot << "\t" <<  R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << Q.size() << "\t"<< res.size() << "\n"; 
         //Identify neighbours (N) of the vertex
         igraph_vs_t vs; // The concept of picking vertices in a graph
         igraph_vit_t vit; // The selection of verteces in this graph
@@ -480,7 +480,8 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
         nodeIdx.insert(i);
     }
     this->BronKerbosh2({},nodeIdx,{},cliques);
-    for(auto it = cliques.begin(); it != cliques.end(); it++){
+    //Filter Cliques which are too small
+    for(auto it = cliques.begin(); it != cliques.end();){
         bool bSplit = false;
         for(igraph_int_t id : *it){
             if(VAB(&graph,"IsSplit",id)) {
@@ -557,7 +558,7 @@ void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
 igraph_int_t CBPGraph::selectPivot( const std::set<igraph_int_t> & P,
                                     std::set<igraph_int_t> &symDiff) const
 {
-    std::cerr << "Sececting pivot: " << P.size() << "\n";
+    //std::cerr << "Sececting pivot: " << P.size() << "\n";
     symDiff = P;
     igraph_int_t bestPivot = *P.begin();
     for(igraph_int_t pivot : P){
