@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23...4.2.3)
+cmake_minimum_required(VERSION 3.22)
 project(ViroJoin)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -29,7 +29,7 @@ set(ENUM_CHIM_FRAG_SRC src/enumerate_chimeric_fragments.cpp)
 add_executable(enumerate_chimeric_fragments ${ENUM_CHIM_FRAG_SRC})
 
 set(ENUM_EDGE_FRAG_SRC src/enumerate_edges_via_fragments.cpp)
-add_executable(enumeriate_edges_via_fragments ${ENUM_EDGE_FRAG_SRC})
+add_executable(enumerate_edges_via_fragments ${ENUM_EDGE_FRAG_SRC})
 
 set(ENUMERATE_EDGES_SRC src/enumerate_edges.cpp)
 add_executable(enumerate_edges ${ENUMERATE_EDGES_SRC})
