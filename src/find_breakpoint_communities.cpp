@@ -6,11 +6,9 @@
 
 #include "BreakpointGraph.h"
 #include "ChimericFragment.h"
+#include <cptl_stl.h>
 #include "RegionGraph.h"
 #include "igraph/igraph.h"
-#include "libleidenalg/GraphHelper.h"
-#include "libleidenalg/Optimiser.h"
-#include "libleidenalg/ModularityVertexPartition.h"
 #include "config.h"
 #include "utils.h"
 
@@ -103,25 +101,29 @@ std::unordered_set<std::string> VirusNameSet;
 
 //==== FUNCTION DECLARATIONS
 
-void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
-		    jRegLabelVector_t & labelVec,
-                    MututalJRegSetMap_t & mutualJRegSetMap);
-void IdentifyBestJunctions( const std::string fname,
-                            BestJRegSetMap_t & bestSetMap);
 bool ClusterBPGraph(CBPGraph & graph);
 void ClusterBPGraphs(BPGraphMap_t & graphMap);
-void ClusterRegions(const std::string fname, 
-                    const BestJRegSetMap_t & bestSetMap, jRegMap_t & regionMap);
-
 CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap);
+CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap);
 bool FilterBPGraph(CBPGraph & graph);
 void FilterBPGraphs(BPGraphMap_t & graphMap);
+bool FilterAndClusterBPGraph(int id, CBPGraph & graph);
+void FilterAndClusterBPGraphs(size_t nThread, BPGraphMap_t & graphMap);
 void FilterRegions(jRegMap_t & regionMap);
-void OutputRegions( std::string regfname, std::string readfname,
-                    const jRegMap_t & regionMap);
+#ifndef NDEBUG
+void OutputDebugBPGraph(const BPGraphMap_t & graphMap,
+                        std::string BPAdjFileName,
+                        std::string BPVertFileName);
+void OutputDebugRegGraph(   const CRegionGraph & regGraph,
+                            std::string RegAdjFileName,
+                            std::string RegVertFileName);
+#endif //NDEBUG
+void OutputResults( const CRegionGraph & regGraph,
+                    const std::string & regFileName,
+                    const std::string & edgeFileName,
+                    const std::string & assocFileName);
 
 BPGraphMap_t LoadBPGraphs(const std::string & fname);
-void IdentifyCommunities(BPGraphMap_t & graphMap);
 std::string to_bed(CRegionGraph::VertexProps);
 
 //==== MAIN
@@ -162,64 +164,44 @@ int main(int argc, char* argv[]) {
     std::string regFileName = workdir + "/region-candidates.bed";
     std::string edgeFileName = workdir + "/edge-candidates.tab";
     std::string assocFileName = workdir + "/fragment-edge-associations.tab";
+#ifndef NDEBUG
+    //##Debug Files
+    std::string BPAdjFileName = workdir + "/BPadj.tab";
+    std::string BPVertFileName = workdir + "/BPvertex.tab";
+    std::string RegAdjFileName = workdir + "/Regadj.tab";
+    std::string RegVertFileName = workdir + "/Regvertex.tab";
+#endif //NDEBUG
 
     LoadVirusNames(virus_ref_fname,VirusNameSet);
 
     MaxInsertSize = parse_stats(stats_file_name).max_is;
     ReadLength = parse_config(config_file_name).read_len;
+    size_t nThread = parse_config(config_file_name).threads;
 
     jRegLabelVector_t labelVec;
     jRegLabelCount_t labelCount;
 
     igraph_setup();
-
+    //BREAKPOINT GRAPH TO ID REGIONS
     BPGraphMap_t graphMap = LoadBPGraphs(candidate_file_name);
-    //TODO: parallelize
-    FilterBPGraphs(graphMap);
-    ClusterBPGraphs(graphMap);
-    CRegionGraph regGraph = ConstructRegionGraph(graphMap);
-    regGraph.filterEdges(MinimumReads,SplitBonus);
-    // Open output stream 
-    std::ofstream regionBedFile(regFileName);
-    std::ofstream edgeTabFile(edgeFileName);
-    std::ofstream assocTabFile(assocFileName);
-    // Track unique regions
-    std::unordered_set<igraph_int_t> printedVertexSet;
-    for(int eid = 0; eid < regGraph.ecount();eid++){
-        CRegionGraph::EdgeProps prop = regGraph.get_edge_properties(eid);
-        //Output the fragment-edge associations
-        for(const std::string & fragGrp : prop.assocFragGroups) {
-        for(size_t fragGrpIdx = 0; fragGrpIdx < prop.assocFragGroups.size(); fragGrpIdx++) {
-            std::vector<std::string> fragNameVec = strsplit(fragGrp,CRegionGraph::DupDelim);
-            for(const std::string & fragName : fragNameVec){
-                assocTabFile << fragName << "\t" << eid << "\t" << fragGrpIdx << "\n";
-            }
-        }
-        //Get Endpoints of the edge, and the region defining information
-        std::pair<igraph_int_t,igraph_int_t> endpoints =
-            regGraph.get_edge_endpoints(eid);
-        //Output the edge information
-        edgeTabFile << eid << endpoints.first << endpoints.second << prop.weight << "\n";
-        //Output each region
-        CRegionGraph::VertexProps hostRegProp =
-            regGraph.get_vertex_properties(endpoints.first);
-        regionBedFile << to_bed(hostRegProp) << "\n";
-        CRegionGraph::VertexProps virusRegProp =
-            regGraph.get_vertex_properties(endpoints.second);
-        regionBedFile << to_bed(virusRegProp) << "\n";
-        }
-    }
-    
-       
-    //IdentifyCommunities(graphMap);
 
-    //BestJRegSetMap_t regionAssignments;
-    //IdentifyBestJunctions(candidate_file_name,regionAssignments);
-    //jRegMap_t regionMap;
-    //ClusterRegions(candidate_file_name,regionAssignments,regionMap);
-    //FilterRegions(regionMap);
-    //OutputRegions(reg_file_name,read_file_name,regionMap);
-    fprintf(stderr,"Done - cluster_junctions\n");
+    if(nThread == 1){ //Single Threaded version - maybe avoid some overhead
+        FilterBPGraphs(graphMap);
+        ClusterBPGraphs(graphMap);
+    } else { //MultiThreaded Version
+        FilterAndClusterBPGraphs(nThread,graphMap);
+    }
+#ifndef NDEBUG
+    OutputDebugBPGraph(graphMap,BPAdjFileName,BPVertFileName);
+#endif //NDEBUG
+    //REGION GRAPH TO ID EDGES
+    CRegionGraph regGraph  = ConstructAndFilterRegionGraph(graphMap);
+#ifndef NDEBUG
+    OutputDebugRegGraph(regGraph,RegAdjFileName,RegVertFileName);
+#endif //NDEBUG
+    OutputResults(regGraph,regFileName,edgeFileName,assocFileName);
+           
+    fprintf(stderr,"Done - enumerate_edges\n");
 }
 
 //==== FUNCTION DEFINITIONS
@@ -236,9 +218,8 @@ bool ClusterBPGraph(CBPGraph & graph) {
 //Output    - None, modifies the input
 void ClusterBPGraphs(BPGraphMap_t & graphMap) {
     fprintf(stderr,"Clustering fragments within graphs ...\n");
-    int counter = 0;
+    //int counter = 0;
     for(auto it = graphMap.begin(); it != graphMap.end(); ){
-        std::cerr << counter << "\n";
         if(ClusterBPGraph(it->second)){ 
             it++;
         } else {
@@ -251,6 +232,7 @@ void ClusterBPGraphs(BPGraphMap_t & graphMap) {
 //Takes the cliques generated in the graph map and builds regions from them
 //Which are then placed into a bipartite graph of host and viral regions
 CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap) {
+    fprintf(stderr, "Constructing Region Graph ... \n");
     CRegionGraph regGraph;
     for( const auto & pair : graphMap ){
         const CBPGraph & graph = pair.second;
@@ -285,192 +267,61 @@ CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap) {
         }
         //Add the regions to the region graph
         for(const auto & pair : regionPropMap) {
+            //std::cerr << "Vertex " << regGraph.vcount() << "\n";
+            //std::cerr << strjoin(pair.second.assocFragGroups.begin(),pair.second.assocFragGroups.end(),'\t') << "\n";
             regGraph.addOrUpdateVertex( pair.second);
         }
     }
+    fprintf(stderr, "Region graph with %d regions and %d edges created\n",regGraph.vcount(),regGraph.ecount());
     return regGraph;
 }
 
-////Parsed the candidate junctions and counts the instances of each junction
-////Then outputs a vector of junction labels ordered from most to least numerous
-////As a side effect the split status for the labels is recorded
-////Inputs - a string representing the file containing candidate junctions
-////	 - a reference to a mapping of counts for labels
-////	 - a reference to a vector of labels
-////	 - a reference to a mapping of split status for labels
-////Output - None, modifies the label count map and vector and split status map
-//void OrderJunctions(const std::string fname, jRegLabelCount_t & labelCount,
-//		    jRegLabelVector_t & labelVec,
-//		    jRegSplitStatus_t & labelFromSplitOnly,
-//                    MututalJRegSetMap_t & mutualJRegSetMap)
-//{
-//    fprintf(stderr,"Ordering Junctions ...\n");
-//    std::ifstream in(fname);
-//    std::string chr,qname;
-//    size_t off, end;
-//    char score, strand;
-//    ;
-//    while (in >> chr >> off >> end >> qname >> score >> strand){
-//	jRegLabel_t label = {chr,strand,off};
-//	bool bSplit = (qname[qname.length()-2] == '_');
-//	if(!labelCount.count(label)) {
-//	    labelCount[label] = 0;
-//	    labelVec.push_back(label);
-//	    labelFromSplitOnly[label] = true;
-//	}
-//	labelCount[label]++;
-//	if(!bSplit) labelFromSplitOnly[label] = false;
-//    }
-//    //Pass over the regions again and determine how many mutually nearby junctions there are
-//    //Track how many other labels are mutually in range of a given label
-//    jRegLabelCount_t mutualLabelCount;
-//    double perc = 0;
-//    size_t i = 0;
-//    for(const auto & pair : labelCount){
-//	const jRegLabel_t & aLabel = pair.first;
-//        mutualLabelCount[aLabel] = 0;
-//        mutualJRegSetMap[aLabel] = jRegLabelSet_t();
-//        bool bSplit = labelFromSplitOnly[aLabel];
-//        size_t aRange = (bSplit) ? ReadLength : MaxInsertSize;
-//	size_t left = (aLabel.pos > aRange) ? aLabel.pos - aRange : 0;
-//	size_t right = aLabel.pos + aRange;
-//        for(size_t pos = left; pos <= right; pos++){
-//            jRegLabel_t bLabel = {aLabel.chr, aLabel.strand, pos};
-//	    //Check if the potential junction exists
-//	    if(!labelCount.count(bLabel)) continue;
-//            //Make sure the other junction is mutually in range
-//	    size_t bRange = (labelFromSplitOnly[bLabel]) ?  ReadLength : 
-//	    						    MaxInsertSize;
-//	    size_t dist = (pos < aLabel.pos) ?  aLabel.pos - pos :
-//	    				    pos - aLabel.pos;	
-//	    if(dist > bRange) continue;
-//            mutualLabelCount[aLabel] += labelCount[bLabel];
-//            mutualJRegSetMap[aLabel].insert(bLabel);
-//        }
-//        i++;
-//        while( (i * 100.0) / double(labelVec.size()) > perc){
-//	        perc += 1;
-//	        fprintf(stderr,"Progress %lu of %lu (~%0.0f%%)\r",i,labelVec.size(),perc);
-//	    }
-//    }
-//    //Sort the vector of labels in descending order by count
-//    //sort's comparator is true if less (i.e earlier in sorted order),
-//    //	so we must return true if greater
-//    std::sort(	labelVec.begin(),labelVec.end(),
-//		[&labelCount,&mutualLabelCount](jRegLabel_t & a, jRegLabel_t & b){
-//		    return (labelCount[a] + mutualLabelCount[a] > labelCount[b] + mutualLabelCount[b]);
-//		});
-//
-//    fprintf(stderr,"\nOrdered %lu unique Junctions\n",labelVec.size());
-//}
 
-////First loads all unique junctions and sorts them by order of prevalance
-////Then assigns each junction to the best junction within range
-////Inputs - a string representing the file containing candidate junctions
-////	 - a reference to a map from label to best label set
-////Output - None, modifies the best set map
-//void IdentifyBestJunctions( const std::string fname,
-//			    BestJRegSetMap_t & bestSetMap) {
-//
-//    fprintf(stderr,"Assigning junctions ...\n");
-//    jRegLabelVector_t labelVec;
-//    jRegLabelCount_t labelCount;
-//    jRegSplitStatus_t labelFromSplitOnly;
-//    MututalJRegSetMap_t mutualJRegSetMap;
-//    OrderJunctions( fname,labelCount,labelVec,labelFromSplitOnly,
-//                    mutualJRegSetMap);
-//
-//    //Iterate over junctions from most prevalent to least
-//    double perc = 0;
-//    for(size_t i = 0; i < labelVec.size(); ){
-//	size_t first = i; 
-//        //Iterate over all junctions with the same score as this one
-//	do {
-//	    jRegLabel_t & aLabel = labelVec[i];
-//            for(const jRegLabel_t & bLabel : mutualJRegSetMap[aLabel]){
-//                if(!bestSetMap.count(bLabel)){
-//		    bestSetMap[bLabel] = jRegLabelSet_t();
-//		    bestSetMap[bLabel].insert(aLabel);
-//		} else if(bestSetMap[bLabel].count(labelVec.at(first))){
-//		    //bLabel has been assigned to a label with the same
-//		    //score as aLabel
-//		    bestSetMap[bLabel].insert(aLabel);
-//		}
-//            }
-//	    //size_t aRange = (labelFromSplitOnly[aLabel]) ?	ReadLength : 
-//	    //    						MaxInsertSize;
-//	    //size_t left = (aLabel.pos > aRange) ? aLabel.pos - aRange : 0;
-//	    //size_t right = aLabel.pos + aRange;
-//            ////Iterate over all junctions in range of this junction
-//	    //for(size_t pos = left; pos <= right; pos++){
-//	    //    jRegLabel_t bLabel = {aLabel.chr, aLabel.strand, pos};
-//	    //    //Check if the potential junction exists
-//	    //    if(!labelCount.count(bLabel)) continue;
-//	    //    //Make sure the other junction is mutually in range
-//	    //    size_t bRange = (labelFromSplitOnly[bLabel]) ?	ReadLength : 
-//	    //    						MaxInsertSize;
-//	    //    size_t dist = (pos < aLabel.pos) ?  aLabel.pos - pos :
-//	    //    				    pos - aLabel.pos;	
-//	    //    if(dist > bRange) continue;
-//	    //    //Check if the bLabel has already been assigned
-//	    //    if(!bestSetMap.count(bLabel)){
-//	    //        bestSetMap[bLabel] = jRegLabelSet_t();
-//	    //        bestSetMap[bLabel].insert(aLabel);
-//	    //    } else if(bestSetMap[bLabel].count(labelVec.at(first))){
-//	    //        //bLabel has been assigned to a label with the same
-//	    //        //score as aLabel
-//	    //        bestSetMap[bLabel].insert(aLabel);
-//	    //    }
-//	    //}
-//	    i++; 
-//	    while( (i * 100.0) / double(labelVec.size()) > perc){
-//	        perc += 1;
-//	        fprintf(stderr,"Progress %lu of %lu (~%0.0f%%)\r",i,labelVec.size(),perc);
-//	    }
-//	} while(i < labelVec.size() && 
-//		labelCount[labelVec[i]] == labelCount[labelVec[first]]);
-//    }
-//    fprintf(stderr,"\nJunctions Assigned\n");
-//}
+CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap) {
+    CRegionGraph regGraph = ConstructRegionGraph(graphMap);
+    fprintf(stderr,"Merging uninformatively diffferent overlapping regions ...\n");
+    regGraph.mergeUninformitiveOverlap();
+    fprintf(stderr,"After merging, %d regions and %d edges remain ...\n", regGraph.vcount(), regGraph.ecount());
+    fprintf(stderr,"Filtering low support edges ...\n");
+    regGraph.filterEdges(MinimumReads,SplitBonus);
+    fprintf(stderr,"After filtering, %d edges remain\n",regGraph.ecount());
+    return regGraph;
+}
 
+//Given a graph, filters undersupported vertexes, and if sufficient support remains
+// then it will cluster vertexes
+//Inputs - an arbitrary id for the function call
+//       a CBPGraph object on which to operate
+//Output - true if there are cliques with sufficent support, false otherwise
+bool FilterAndClusterBPGraph(int id, CBPGraph & graph) {
+    if(!FilterBPGraph(graph)){ return false; }
+    return ClusterBPGraph(graph);
+}
 
-////Parses candidate junctions and assigns each to the most prevalent region within the max
-////insert size; the range for paired reads is max insert size, the range for split reads is
-////read length
-////Inputs - a string representing the file containing candidate junctions
-////	 - a reference to an ordered vector of region labels
-////	 - a reference to a regionMap to stor results in
-////	 - also used global max insert size and read length
-////Output - None, modifes the regionMap
-//void ClusterRegions(const std::string fname, const BestJRegSetMap_t & bestSetMap,
-//		    jRegMap_t & regionMap) {
-//     fprintf(stderr,"Clustering Regions ...\n");
-//     std::ifstream in(fname);
-//     std::string chr, qname;
-//     size_t off, end;
-//     char score, strand;
-//     //Iterate over candidate junctions
-//     while (in >> chr >> off >> end >> qname >> score >> strand){
-//	 jRegLabel_t aLabel = {chr,strand,off};
-//	 bool bSplit = (qname[qname.length()-2] == '_');
-//	 for( const auto & bLabel : bestSetMap.at(aLabel) ){
-//	    if(!regionMap.count(bLabel)){
-//		regionMap[bLabel] = junctionRegion_t(bLabel.pos);
-//	    }
-//	    //Extend the bounds of the region
-//	    if(off < regionMap[bLabel].left){
-//	        regionMap[bLabel].left = off;
-//	    } else if(off > regionMap[bLabel].right){
-//	        regionMap[bLabel].right = off;
-//	    }
-//	    //Indicate if the region has split reads if necessary
-//	    if(bSplit) regionMap[bLabel].nSplit++;
-//	    regionMap[bLabel].QNameSet.insert(qname);
-//	 }
-//     }
-//     fprintf(stderr,"Selected %lu unique regions\n",regionMap.size());
-//}
-
+//Multithreaded processing of BP graphs to identify regions
+void FilterAndClusterBPGraphs(size_t nThread, BPGraphMap_t & graphMap) {
+    fprintf(stderr,"Filtering and Clustering Breakpoint Graphs ...\n");
+    ctpl::thread_pool threadPool(nThread);
+    //Launch processes for each graph
+    std::map<std::string,std::future<bool>> futureMap;
+    for(auto & pair : graphMap){
+        std::future<bool> future = threadPool.push(
+                FilterAndClusterBPGraph,std::ref(pair.second) );
+        futureMap.insert({pair.first,std::move(future)});
+    }
+    //Note which graphs have insufficient support
+    std::vector<std::string> toFilter;
+    for(auto & pair : futureMap){
+        if(!pair.second.get()){
+            toFilter.push_back(pair.first);
+        }
+    }
+    //Remove the low support graphs AFTER all processing is done
+    for(const std::string & contig : toFilter){
+        graphMap.erase(contig);
+    }
+    fprintf(stderr,"After clustering, %lu Breakpoint Graphs remain\n", graphMap.size());
+}
 
 //Ensures that every vertex within a graph has sufficient edges to contribute to 
 //  a valid region, then ensures each graph has sufficient nodes to contibute to
@@ -489,7 +340,6 @@ bool FilterBPGraph(CBPGraph & graph) {
 //Inputs    - a graph map containing graphs to filter
 //Output    - None, modifies the input
 void FilterBPGraphs(BPGraphMap_t & graphMap) {
-    std::cerr << "Filtered Down to " << graphMap.size() << " graphs\n";
     fprintf(stderr,"Filtering Initial BP Graphs ...\n");
     for(auto it = graphMap.begin(); it != graphMap.end(); ){
         if(FilterBPGraph(it->second)){ 
@@ -580,43 +430,10 @@ void FilterRegions(jRegMap_t & regionMap){
     fprintf(stderr,"Filtered Down to %lu Regions\n",regionMap.size());
 }
 
-////Given a map of regions, outputs to a given file
-////Inputs - a string represnting the output file name
-////	 - a reference to a region map containing regions to output
-////Output - None, writes to the povided file
-//void OutputRegions(std::string regfname, std::string readfname, const jRegMap_t & regionMap){
-//    fprintf(stderr,"Printing Regions ...\n");
-//    std::ofstream regOutput(regfname);
-//    std::ofstream readOutput(readfname);
-//    double perc=0;
-//    size_t i = 0;
-//    size_t regID = 0;
-//    char idBuf[15];
-//    for(auto & pair : regionMap){
-//    	const jRegLabel_t & label = pair.first;
-//    	const junctionRegion_t & reg = pair.second;
-//        //auto it = reg.QNameSet.begin();
-//	//std::string qnameStr = *(it++);
-//        //for(;it != reg.QNameSet.end(); it++){
-//	//    qnameStr = qnameStr + "," + *it;
-//        //}
-//        sprintf(idBuf,"Reg_%010zu",regID++);
-//	regOutput	<< label.chr << "\t" << reg.left << "\t" << reg.right + 1 << "\t"
-//		<< idBuf << "\t.\t" << label.strand << "\n";
-//        for(std::string qname : reg.QNameSet){
-//            readOutput << qname << "\t" << idBuf << "\n";
-//        }
-//        ++i;
-//	while( (i * 100.0) / double(regionMap.size()) > perc){
-//	    perc += 1;
-//	    fprintf(stderr,"Progress %lu of %lu (~%0.0f%%)\r",i,regionMap.size(),perc);
-//	}
-//    }
-//    fprintf(stderr,"\nRegions Printed\n");
-//}
 
 BPGraphMap_t LoadBPGraphs(const std::string & fname) {
-    std::cerr << "Loading graphs ..." << "\n";
+    //std::cerr << "Loading graphs ..." << "\n";
+    fprintf(stderr,"Loading Graphs ...\n");
     std::ifstream in(fname);
     BPGraphMap_t graphByContig;
     std::string bedpeStr;
@@ -633,20 +450,98 @@ BPGraphMap_t LoadBPGraphs(const std::string & fname) {
                                 UpstreamSize, ReadLength,
                                 MaxInsertSize, SplitFactor);
                graphByContig.insert({contig, std::move(graph)}); 
-               graphByContig.at(contig).assertOwnership();
             }
             CBPGraph & graph = graphByContig.at(contig);
-            graphByContig.at(contig).assertOwnership();
-            graph.assertOwnership();
             graph.addOrUpdateVertex( frag.proximal_pos(ivIdx),
                                      frag.distal_pos(ivIdx),
                                      frag.is_split(ivIdx),
                                      frag.getName());
-            graph.assertOwnership();
         }
     }
-    std::cerr << "Loaded " << graphByContig.size() << " graphs\n";
+    fprintf(stderr,"Loaded %lu graphs\n",graphByContig.size());
     return graphByContig;
+}
+
+#ifndef NDEBUG
+void OutputDebugBPGraph(const BPGraphMap_t & graphMap,
+                        std::string BPAdjFileName,
+                        std::string BPVertFileName)
+{ 
+    FILE* adjFile_ptr = fopen(BPAdjFileName.c_str(), "w");
+    std::ofstream vertFile(BPVertFileName);
+    for(auto & pair : graphMap){
+        fprintf(adjFile_ptr,"===%s\n",pair.first.c_str());
+        pair.second.write_edgelist(adjFile_ptr);
+        vertFile << "===" << pair.first << "\n";
+        for(int id = 0; id < pair.second.vcount();id++){
+            vertFile << pair.second.get_vertex_properties(id).to_string() <<
+                        "\n";
+        }
+    }
+    fclose(adjFile_ptr);
+}
+
+void OutputDebugRegGraph(   const CRegionGraph & regGraph,
+                            std::string RegAdjFileName,
+                            std::string RegVertFileName)
+{
+    FILE* adjFile_ptr = fopen(RegAdjFileName.c_str(), "w");
+    regGraph.write_edgelist(adjFile_ptr);
+    fclose(adjFile_ptr);
+    std::ofstream vertFile(RegVertFileName);
+    for(int id = 0; id < regGraph.vcount();id++){
+        vertFile << regGraph.get_vertex_properties(id).to_string() << "\n";
+    }
+}
+
+#endif //NDEBUG
+
+
+void OutputResults( const CRegionGraph & regGraph,
+                    const std::string & regFileName,
+                    const std::string & edgeFileName,
+                    const std::string & assocFileName)
+{
+    fprintf(stderr,"Outputting Results ... \n");
+        // Open output stream 
+    std::ofstream regionBedFile(regFileName);
+    std::ofstream edgeTabFile(edgeFileName);
+    std::ofstream assocTabFile(assocFileName);
+    // Track unique regions
+    size_t nAssoc = 0;
+    std::set<std::string> seenRegions;
+    std::set<std::string> seenFragments;
+    for(int eid = 0; eid < regGraph.ecount();eid++){
+        CRegionGraph::EdgeProps prop = regGraph.get_edge_properties(eid);
+        //Output the fragment-edge associations
+        for(size_t fragGrpIdx = 0; fragGrpIdx < prop.assocFragGroups.size(); fragGrpIdx++) {
+            const std::string & fragGrp = prop.assocFragGroups[fragGrpIdx];
+            std::vector<std::string> fragNameVec = strsplit(fragGrp,CRegionGraph::DupDelim);
+            for(const std::string & fragName : fragNameVec){
+                assocTabFile << fragName << "\t" << eid << "\t" << fragGrpIdx << "\n";
+                seenFragments.insert(fragName);
+                nAssoc++;
+            }
+        }
+        //Get Endpoints of the edge, and the region defining information
+        std::pair<igraph_int_t,igraph_int_t> endpoints =
+            regGraph.get_edge_endpoints(eid);
+        //Output the edge information
+        edgeTabFile << eid << "\t" << endpoints.first << "\t" << endpoints.second << "\t" << prop.weight << "\n";
+        //Output each region
+        for(auto & prop : {  regGraph.get_vertex_properties(endpoints.first),
+                            regGraph.get_vertex_properties(endpoints.second)} )
+        {
+            std::string regStr = to_bed(prop);
+            auto res = seenRegions.insert(regStr);
+            if(res.second){
+                regionBedFile << regStr << "\n";
+            }
+        }
+    }
+    fprintf(stderr,"Wrote %lu Unique Regions to %s\n",seenRegions.size(),regFileName.c_str());
+    fprintf(stderr,"Wrote %d Edges to %s\n",regGraph.ecount(),edgeFileName.c_str());
+    fprintf(stderr,"Wrote %lu associations to %lu unique fragments to %s\n",nAssoc,seenFragments.size(),edgeFileName.c_str());
 }
 
 //Takes a set of vertex properties defining a region, and constructs a bed formated string
@@ -658,26 +553,9 @@ std::string to_bed(CRegionGraph::VertexProps props) {
     uint16_t flag = (ChimericFragment_t::HAS_INTERVAL);
     flag |= (props.opensLeft) ? ChimericFragment_t::OPENS_LEFT : 0;
     flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
-    flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
+//    flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
     bed += '\t' + std::to_string(int(flag));
-    bed += '\t' + ((props.opensLeft == props.isHost) ? "-" : "+");
+    bed += '\t' + std::string((props.opensLeft == props.isHost) ? "-" : "+");
     return bed;
 }
 
-//NOTE: Each strand (chromosome and strandedness combo) can be handled in parallel
-//  Current implementation plan is to do it in serial, but have the infrastructure set up to split things by
-//  strand in advance
-//void IdentifyCommunities(BPGraphMap_t & graphMap) {
-//    std::cerr << "IDing communities ..." << "\n";
-//    for( auto & pair : graphMap){
-//        Graph graph = Graph(pair.second.get_igraph());
-//        ModularityVertexPartition part(&graph);
-//        Optimiser o;
-//        o.optimise_partition(&part);
-//        for(size_t i = 0; i < graph.vcount(); i++){
-//            VertexProps props = pair.second.get_vertex_properties(i);
-//            std::cout << i << "\t" << pair.second.get_chromosome() << ":" << pair.second.opens_left() << "\t" << part.membership(i) << "\t" << props.assocFragments << "\n";
-//        }
-//    }
-//    std::cerr << "Done ID communities" << "\n";
-//}
