@@ -4,7 +4,6 @@ installDir="$projectDir/built_libs"
 mkdir -p "$installDir"
 htsLibVer=1.21
 igraphVer=1.0.1
-libleidenalgVer=0.12.0
 
 #Build HTSLib
 tar -xjf "htslib-$htsLibVer.tar.bz2"
@@ -24,13 +23,3 @@ cmake --build .
 cmake --install .
 cd ../..
 rm -rf "igraph-$igraphVer"
-
-#Build libleidenalg
-tar -xzf "libleidenalg-$libleidenalgVer.tar.gz" || exit 1;
-cd "libleidenalg-$libleidenalgVer" || exit 1;
-mkdir build && cd build || exit 1;
-cmake .. -DCMAKE_INSTALL_PREFIX="$installDir" -DCMAKE_PREFIX_PATH="$installDir"
-cmake --build .
-cmake --install .
-cd ../../
-rm -rf "libleidenalg-$libleidenalgVer"
