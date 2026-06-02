@@ -56,6 +56,13 @@ struct VertexProps {
     bool isSplit;
     std::vector<int> cliques;
     std::vector<std::string> assocFragments;
+    std::string to_string() {
+        return  std::to_string(id) + ") " +
+                std::to_string(distalPos) + "-" + std::to_string(proximalPos) + 
+                std::string((isSplit) ? "|" : ">") + "\t" +
+                to_strjoin(cliques.begin(),cliques.end(),',') + "\t" +
+                strjoin(assocFragments.begin(),assocFragments.end(),',');
+    }
 };
     //Members
 public:
@@ -278,7 +285,8 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
     if(!P.size()) { return; }
     std::set<igraph_int_t> Q;
     //The pivot index returned is discarded
-    igraph_int_t pivot = this->selectPivot(P,Q);
+    /*igraph_int_t pivot =*/
+    this->selectPivot(P,Q);
     for( igraph_int_t v : Q) {
         //std::cerr << "InLOOP w pivot: " << pivot << "\t" <<  R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << Q.size() << "\t"<< res.size() << "\n"; 
         //Identify neighbours (N) of the vertex
@@ -479,7 +487,20 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     for(igraph_int_t i = 0; i < this->vcount(); i++){
         nodeIdx.insert(i);
     }
-    this->BronKerbosh2({},nodeIdx,{},cliques);
+    //this->BronKerbosh2({},nodeIdx,{},cliques);
+    //The igraph implementation is at least 3x faster...
+    igraph_vector_int_list_t cliq;
+    igraph_vector_int_list_init(&cliq,0);
+    igraph_maximal_cliques(&graph,&cliq,int(minVertex - splitBonus),IGRAPH_UNLIMITED,IGRAPH_UNLIMITED);
+    for(int i = 0; i < igraph_vector_int_list_size(&cliq); i++){
+        cliques.push_back(std::set<igraph_int_t>());
+        igraph_vector_int_t * ptr = igraph_vector_int_list_get_ptr(&cliq,i);
+        for(int j = 0; j < igraph_vector_int_size(ptr); j++){
+            cliques[i].insert(VECTOR(*ptr)[j]);
+        }
+
+    }
+    igraph_vector_int_list_destroy(&cliq);
     //Filter Cliques which are too small
     for(auto it = cliques.begin(); it != cliques.end();){
         bool bSplit = false;
@@ -521,8 +542,6 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     flag |= VALID_CLIQUES;
     return bool(cliques.size());
 }
-
-
 
 void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
     assertOwnership();
