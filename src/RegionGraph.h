@@ -5,6 +5,7 @@
 #include "igraph/igraph.h"
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <stdexcept>
 #include <set>
 #include <string>
@@ -38,6 +39,61 @@ struct VertexProps {
                 std::string((!opensLeft) ? ((fromSplit) ? "|" : ">") : "") +
                 "\t" + 
                 strjoin(assocFragGroups.begin(),assocFragGroups.end(),',');
+    }
+    bool testOverlap(const VertexProps & other) const {
+        if(chromosome != other.chromosome) { return false; }
+        if(opensLeft != other.opensLeft) { return false; }
+        size_t ml = (left < other.left) ? other.left  : left;
+        size_t r = (left < other.left) ? right : other.right;
+        return ml < r;
+    }
+    bool testComparableFragments(const VertexProps & other) const {
+        std::set<std::string> thisFragSet;
+        std::set<std::string> otherFragSet;
+        for(std::string fragGrp : this->assocFragGroups){
+            std::vector<std::string> fragList = strsplit(fragGrp,DupDelim);
+            thisFragSet.insert(fragList.begin(),fragList.end());
+        }
+        for(std::string fragGrp : other.assocFragGroups){
+            std::vector<std::string> fragList = strsplit(fragGrp,DupDelim);
+            otherFragSet.insert(fragList.begin(),fragList.end());
+        }
+        std::set<std::string> * smaller = &thisFragSet;
+        std::set<std::string> * larger = &otherFragSet;
+        if(thisFragSet.size() > otherFragSet.size()){
+            std::swap(smaller,larger);
+        }
+        return std::includes(   larger->begin(),larger->end(),
+                                smaller->begin(),smaller->end());
+    }
+    int compare(const VertexProps & other) const { // <, ==, > :::: -1,0,1
+        if(isHost != other.isHost){ //Host before virus
+            return (isHost) ? -1 : 1;
+        }
+        if(chromosome != other.chromosome) { //string compare
+            return (chromosome < other.chromosome) ? -1 : 1;
+        }
+        if(opensLeft != other.opensLeft) { //Left before right
+            return (opensLeft) ? -1 : 1;
+        }
+        if(left != other.left){ //Leftmost first
+            return (left < other.left) ? -1 : 1;
+        }
+        if(right != other.right){ //Rightmost first
+            return (right < other.right) ? -1 : 1;
+        }
+        if(fromSplit != other.fromSplit) { //Split before unsplit
+            return (fromSplit) ? -1 : 1;
+        }
+        if(assocFragGroups.size() != other.assocFragGroups.size()){ //Less frags before more
+            return (assocFragGroups.size() < other.assocFragGroups.size()) ? -1 : 1;
+        }
+        std::string thisStr = strjoin(assocFragGroups.begin(),assocFragGroups.end(),FragDelim);
+        std::string otherStr = strjoin(other.assocFragGroups.begin(),other.assocFragGroups.end(),FragDelim);
+        if(thisStr != otherStr){ //string compare
+            return (thisStr < otherStr) ? -1 : 1;
+        }
+        return 0;
     }
 };
 
@@ -83,6 +139,7 @@ public:
                             size_t right, std::vector<std::string>);
     void addOrUpdateVertex(const VertexProps & prop);
     void filterEdges( double minWeight, double splitBonus);
+    void mergeUninformitiveOverlap();
     void write_edgelist(FILE * outstream) {
         igraph_write_graph_edgelist(&graph,outstream);
     }
@@ -201,6 +258,7 @@ void CRegionGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
 
     //Skip edges within parts of the graph
     if(v1.isHost == v2.isHost) { return; }
+
 
     //Determine if the edge already exists
     //Adding edges always follows adding a vertex so edges cannot already exist 
@@ -366,6 +424,79 @@ CRegionGraph::VertexProps CRegionGraph::get_vertex_properties(int id) const {
     };
 }
 
-
+//Goes through verticies and merges together those which represent overlapping regions
+//for which the set of fragments is comparable (|A + B| = max(|A|,|B|)) 
+void CRegionGraph::mergeUninformitiveOverlap() {
+    assertOwnership();
+    std::vector<VertexProps> sortedVertexProps;
+    for(igraph_int_t i = 0; i < this->vcount(); i++){
+        sortedVertexProps.push_back(this->get_vertex_properties(i));
+    }
+    std::sort(  sortedVertexProps.begin(),sortedVertexProps.end(),
+                [](const VertexProps & a, const VertexProps & b) {
+                    return (a.compare(b) == -1);
+                } );
+    std::set<igraph_int_t> toRemoveSet;
+    std::vector<VertexProps> toAdd;
+    const VertexProps * l = &sortedVertexProps.front();
+    VertexProps m;
+    m.id=-1; // Use an id of -1 to indicate an unititialized merged vertex
+    for(size_t i = 1; i < sortedVertexProps.size(); i++){
+        const VertexProps & r = sortedVertexProps[i];
+        //If Overlapping and one contains all the fragments in the other
+        if(l->testOverlap(r) && l->testComparableFragments(r)){
+            //These two can be combined
+            if(m.id == -1) {
+                //Copy chromosome, opensLeft, isHost
+                //Also copy the id which is used to indicate if m contains
+                //  a merged vertex or not
+                m = *l;
+            }
+            m.left = std::min(l->left,r.left);
+            m.right = std::max(l->right,r.right);
+            m.fromSplit = l->fromSplit || r.fromSplit;
+            //keep unique fragment groups
+            std::set<std::string> fragGrpSet;
+            fragGrpSet.insert(l->assocFragGroups.begin(),l->assocFragGroups.end());
+            fragGrpSet.insert(r.assocFragGroups.begin(),r.assocFragGroups.end());
+            m.assocFragGroups.clear();
+            m.assocFragGroups.insert(   m.assocFragGroups.end(),
+                                        fragGrpSet.begin(),fragGrpSet.end());
+            //Record the old vertexes to remove
+            toRemoveSet.insert(l->id);
+            toRemoveSet.insert(r.id);
+            //Set the merged vertex to be the left for the next comparison
+            l = &m;
+        } else { // No merge
+            if(m.id != -1){ //If there was a a merged vertex, record it
+                toAdd.push_back(m);
+                m.id = -1;
+            }
+            //Set the right vertex to be the elft for the enxt comparison
+            l = &r;
+        }
+    }
+    if(m.id != -1){ //Check if there is a merged vertex awaiting recording (last compare resulted in a merge)
+        toAdd.push_back(m);
+    }
+    if(!toRemoveSet.size()){
+        return; // There were no merges
+    }
+    //Invalidate the old lookup table
+    flag &= ~VALID_LOOKUP;
+    //Delete the old verticies
+    igraph_vector_int_t toRemove;
+    igraph_vector_int_init(&toRemove,toRemoveSet.size());
+    size_t counter = 0;
+    for(igraph_int_t id : toRemoveSet){
+        VECTOR(toRemove)[counter++] = id;
+    }
+    igraph_delete_vertices(&graph,igraph_vss_vector(&toRemove));
+    igraph_vector_int_destroy(&toRemove);
+    //Add the merged vertices back in
+    for(const auto & prop : toAdd){
+        this->addOrUpdateVertex(prop);
+    }
+}
 
 #endif // REGION_GRAPH_H
