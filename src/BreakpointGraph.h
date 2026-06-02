@@ -105,7 +105,7 @@ public:
                             const std::string & assocFragments);
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
-    void write_edgelist(FILE * outstream) {
+    void write_edgelist(FILE * outstream) const {
         igraph_write_graph_edgelist(&graph,outstream);
     }
 private:

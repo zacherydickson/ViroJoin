@@ -140,7 +140,7 @@ public:
     void addOrUpdateVertex(const VertexProps & prop);
     void filterEdges( double minWeight, double splitBonus);
     void mergeUninformitiveOverlap();
-    void write_edgelist(FILE * outstream) {
+    void write_edgelist(FILE * outstream) const {
         igraph_write_graph_edgelist(&graph,outstream);
     }
 private:
