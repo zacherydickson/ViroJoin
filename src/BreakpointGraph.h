@@ -453,7 +453,7 @@ bool CBPGraph::fragsets_are_comparable( std::vector<std::string> fragVec1,
     //Determine the smaller vector
     std::vector<std::string> * smaller = &fragVec1;
     std::vector<std::string> * larger = &fragVec2;
-    if(fragVec1.size() < fragVec2.size()){
+    if(fragVec1.size() > fragVec2.size()){
         std::swap(fragVec1,fragVec2);
     }
     return std::includes(   larger->begin(),larger->end(),
