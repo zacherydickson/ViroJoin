@@ -30,6 +30,15 @@ struct VertexProps {
     size_t left;
     size_t right;
     std::vector<std::string> assocFragGroups;
+    std::string to_string() {
+        return  std::to_string(id) + ") " + 
+                std::string((isHost) ? "H" : "V") + ":" + chromosome + "\t" +
+                std::string((opensLeft) ? ((fromSplit) ? "|" : "<") : "") +
+                std::to_string(left) + "-" + std::to_string(right) + 
+                std::string((!opensLeft) ? ((fromSplit) ? "|" : ">") : "") +
+                "\t" + 
+                strjoin(assocFragGroups.begin(),assocFragGroups.end(),',');
+    }
 };
 
 struct EdgeProps {
@@ -74,6 +83,9 @@ public:
                             size_t right, std::vector<std::string>);
     void addOrUpdateVertex(const VertexProps & prop);
     void filterEdges( double minWeight, double splitBonus);
+    void write_edgelist(FILE * outstream) {
+        igraph_write_graph_edgelist(&graph,outstream);
+    }
 private:
     void assertOwnership();
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
@@ -199,15 +211,14 @@ void CRegionGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
 
     std::vector<std::string> fGSVec = CRegionGraph::intersectFragmentGroups(
                                         v1.assocFragGroups,v2.assocFragGroups);
-
     //No shared fragment groups 
     if(!fGSVec.size()){ return; }
 
     std::string assocFrag = strjoin(fGSVec.begin(), fGSVec.end(), FragDelim);
 
     SETEAN(&graph, "weight", new_eid, fGSVec.size());
-    SETEAN(&graph, "fromSplit", new_eid, v1.fromSplit || v2.fromSplit);
-    SETEAS(&graph, "assocFragGrp", new_eid, assocFrag.c_str());
+    SETEAB(&graph, "FromSplit", new_eid, v1.fromSplit || v2.fromSplit);
+    SETEAS(&graph, "assocFragGrps", new_eid, assocFrag.c_str());
 }
 
 //Checks if the unique vertex lookup is valid, and rebuilds it if not
@@ -307,7 +318,7 @@ std::vector<std::string> CRegionGraph::intersectFragmentGroups(
     }
     //Group Fragments with the same profile together
     std::map<std::pair<std::set<size_t>,std::set<size_t>>,std::set<std::string>> fragGrpByProfileMap;
-    for( const auto & pair : profileByFragMap ){
+    for( const auto & pair : profileByFragMap ){ //frag,profile pair(reg1 profile, reg2 profile)
         //ensure that the fragment appears in at least one fragGroup in both regions
         if(pair.second.first.size() * pair.second.second.size() > 0){
             fragGrpByProfileMap[pair.second].insert(pair.first);
