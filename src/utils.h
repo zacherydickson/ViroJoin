@@ -158,6 +158,10 @@ bool accept_alignment(const StripedSmithWaterman::Alignment & alignment, int min
 //Output - none, modifies provided set
 void LoadVirusNames(const std::string & file,std::unordered_set<std::string> & virusNameSet){
     FILE* virus_ref_fasta = fopen(file.c_str(), "r");
+    if(!virus_ref_fasta || ferror(virus_ref_fasta)){
+        std::string msg = "Could not open Virus Reference File (" + file + ")"; 
+        throw std::invalid_argument(msg);
+    }
     kseq_t *seq = kseq_init(fileno(virus_ref_fasta));
     while (kseq_read(seq) >= 0) {
         virusNameSet.insert(seq->name.s);
