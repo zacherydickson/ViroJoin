@@ -46,7 +46,8 @@ public:
     enum GRAPH_STATES {
         OWNS_GRAPH = 0x1,
         VALID_LOOKUP = 0x2,
-        VALID_CLIQUES = 0x4,
+        VALID_EDGES = 0x4,
+        VALID_CLIQUES = 0x8,
     };
 // Structure to cache vertex properties internally for quick lookup and manipulation
 struct VertexProps {
@@ -84,6 +85,10 @@ public:
     CBPGraph() = delete;
     CBPGraph(const std::string& chrom, bool opensLeftVal, 
              int upsDist, int rLen, int maxInsert, double sFactor);
+    CBPGraph(   igraph_t && graph, const std::string & chrom, bool opensLeftVal,
+                int upsDist, int rLen, int maxInsert, int sFactor,
+                bool hasEdges, bool hasCliques);
+    CBPGraph(igraph_t && graph, const CBPGraph & parent);
     ~CBPGraph() { if(flag & OWNS_GRAPH) {igraph_destroy(&graph); } }
     // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
     CBPGraph(const CBPGraph&) = delete;
@@ -102,13 +107,19 @@ public:
 //Methods:
 public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
-                            const std::string & assocFragments);
+                            const std::string & assocFragments,
+                            bool bOnline = true);
+    //TODO: Split Graph into connected components before clique ID
+    //TODO: ADD edges with a sliding window
+    void constructEdges();
+    std::vector<CBPGraph> decompose(int minVertex) const;
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
     void write_edgelist(FILE * outstream) const {
         igraph_write_graph_edgelist(&graph,outstream);
     }
 private:
+    void assertConstructed() const;
     void assertOwnership() const;
     void BronKerbosh2 ( std::set<igraph_int_t> R,
                         std::set<igraph_int_t> P,
@@ -138,7 +149,7 @@ private:
 //Constructor
 CBPGraph::CBPGraph(const std::string& chrom, bool opensLeftVal, 
              int upsDist, int rLen, int maxInsert, double sFactor)
-        : flag(OWNS_GRAPH | VALID_LOOKUP),
+        : flag(OWNS_GRAPH | VALID_LOOKUP | VALID_EDGES),
           upstreamDist(upsDist), readLen(rLen), maxInsertSize(maxInsert),
           splitFactor(sFactor)
 {
@@ -150,6 +161,27 @@ CBPGraph::CBPGraph(const std::string& chrom, bool opensLeftVal,
     // Set graph-level attributes
     SETGAS(&graph, "Chromosome", chrom.c_str());
     SETGAB(&graph, "OpensLeft", opensLeftVal);
+}
+
+
+//Pre-constructed graph constructor
+CBPGraph::CBPGraph( igraph_t && graph, const std::string & chrom,
+                    bool opensLeftVal, int upsDist, int rLen, int maxInsert,
+                    int sFactor, bool hasEdges, bool hasCliques) :
+    graph(std::move(graph)), flag(OWNS_GRAPH), upstreamDist(upsDist),
+    readLen(rLen), maxInsertSize(maxInsert),splitFactor(sFactor)
+{
+    if(hasEdges) { flag |= VALID_EDGES; }
+    if(hasCliques) { flag |= VALID_CLIQUES; }
+}
+
+//Child graph constructor
+CBPGraph::CBPGraph(igraph_t && graph, const CBPGraph & parent) :
+    CBPGraph(   std::move(graph), parent.get_chromosome(), parent.opens_left(),
+                parent.upstreamDist, parent.readLen, parent.maxInsertSize,
+                parent.splitFactor, parent.flag & VALID_EDGES,
+                parent.flag & VALID_CLIQUES)
+{
 }
 
 //Move Constructor
@@ -181,6 +213,12 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
 }
 
 
+void CBPGraph::assertConstructed() const {
+    if(!(flag & VALID_EDGES)){
+        throw std::logic_error("Attempt to call edge requiring function without valid edges");
+    }
+}
+
 //Checks that this object owns its underlying graph and can make changes
 void CBPGraph::assertOwnership() const { 
     if(!(flag & OWNS_GRAPH)) {
@@ -188,12 +226,13 @@ void CBPGraph::assertOwnership() const {
     }
 }
 
+
 /**
      * Adds a vertex if the (proximalPos, distalPos) pair is unique.
      * If it already exists, merges attributes with the existing vertex.
      */
 void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit,
-                                    const std::string& assocFragment)
+                                    const std::string& assocFragment, bool bOnline)
 {
     assertOwnership();
     auto key = std::make_pair(proximalPos, distalPos);
@@ -224,16 +263,18 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         SETVAS(&graph, "assocFragments", vid, fragStr.c_str());
 
         //Collect all verticies currently not adjacent to this one
-        igraph_vs_t vs;
-        igraph_vs_nonadj(&vs,vid,IGRAPH_ALL);
-        igraph_vit_t vit;
-        igraph_vit_create(&graph,vs,&vit);
-        while(!IGRAPH_VIT_END(vit)){
-            nonAdjVertices.push_back(IGRAPH_VIT_GET(vit));
-            IGRAPH_VIT_NEXT(vit);
+        if(bOnline){ //Only if we will be adding edges immediately
+            igraph_vs_t vs;
+            igraph_vs_nonadj(&vs,vid,IGRAPH_ALL);
+            igraph_vit_t vit;
+            igraph_vit_create(&graph,vs,&vit);
+            while(!IGRAPH_VIT_END(vit)){
+                nonAdjVertices.push_back(IGRAPH_VIT_GET(vit));
+                IGRAPH_VIT_NEXT(vit);
+            }
+            igraph_vit_destroy(&vit);
+            igraph_vs_destroy(&vs);
         }
-        igraph_vit_destroy(&vit);
-        igraph_vs_destroy(&vs);
 
         //Remove any edges attached to this vertex which connect
         // to a vertex which now no longer has idependent support
@@ -254,8 +295,14 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         SETVAS(&graph, "cliques", vid, "");
         SETVAS(&graph, "assocFragments", vid, assocFragment.c_str());
 
-        nonAdjVertices.resize(vid);
-        std::iota(nonAdjVertices.begin(),nonAdjVertices.end(),0);
+        if(bOnline){ //Only if we will be adding edges immediately
+            nonAdjVertices.resize(vid);
+            std::iota(nonAdjVertices.begin(),nonAdjVertices.end(),0);
+        }
+    }
+
+    if(!bOnline){
+        flag &= ~VALID_EDGES;
     }
 
     //Regardless of whether a new vertex was added, new edges may be formed
@@ -378,6 +425,45 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     }
 }
 
+
+void CBPGraph::constructEdges() {
+    assertOwnership();
+    if(this->vcount() < 2){
+        flag |= VALID_EDGES;
+        return;
+    }
+    std::vector<igraph_int_t> vertexIds(this->vcount());
+    std::iota(vertexIds.begin(),vertexIds.end(),0);
+    auto proxPosIsLess = [this] (igraph_int_t a, igraph_int_t b) {
+               return VAN(&graph,"ProximalPos",a) < VAN(&graph,"ProximalPos",b);
+            };
+    std::sort(vertexIds.begin(),vertexIds.end(), proxPosIsLess);
+    auto leftIt = vertexIds.begin();
+    //std::cerr << VAN(&graph,"ProximalPos",*leftIt) << "\t" << VAN(&graph,"ProximalPos",vertexIds.back()) << "\n";
+    //size_t counter = 1;
+    while(std::next(leftIt) != vertexIds.end() ) {
+        //if(++counter % 1000 == 1){
+        //    std::cerr << "Edges constructed for " << counter << " of " << vertexIds.size() << "Nodes Checked\r"; 
+        //}
+        auto rightIt = std::next(leftIt);
+        auto lastIt = std::lower_bound(
+                rightIt, vertexIds.end(),
+                VAN(&graph,"ProximalPos",*rightIt) + this->maxInsertSize,
+                [this] (igraph_int_t a, double target) {
+                    return VAN(&graph,"ProximalPos",a) < target;
+                } );
+        //if(lastIt != vertexIds.end()){
+        //    std::cerr << VAN(&graph,"ProximalPos",*rightIt) << "\t" << VAN(&graph,"ProximalPos",*lastIt) << "\n";
+        //}
+        for(; rightIt != lastIt; rightIt++){
+            this->checkAndCreateEdge(*leftIt,*rightIt);
+        }
+        leftIt++;
+    }
+    //std::cerr << this->ecount() << "\n";
+    flag |= VALID_EDGES;
+}
+
 //Checks if the unique vertex lookup is valid, and rebuilds it if not
 void CBPGraph::ensureValidLookup() {
     if(flag & VALID_LOOKUP) { return; }
@@ -388,6 +474,31 @@ void CBPGraph::ensureValidLookup() {
         vertex_lookup.emplace(std::make_pair(proxPos,distPos),i);
     }
     flag |= VALID_LOOKUP;
+}
+
+
+//Construct subgraphs of minimum size from each connected component of this graph
+//Input - a threshold number of vertexes
+//Output a vector of subgraphs, empty if no subgraphs have enough
+//vertexes
+std::vector<CBPGraph> CBPGraph::decompose(int minVertex) const {
+    assertConstructed();
+    std::vector<CBPGraph> subGraphVec;
+    //Calculate the components
+    igraph_graph_list_t components;
+    igraph_graph_list_init(&components,0);
+    igraph_decompose(&graph, &components, IGRAPH_WEAK, -1, minVertex);
+    //Construct the children
+    for(igraph_int_t i =0; i < igraph_graph_list_size(&components); i++){
+        //The list owns its elements, so if we moved the items out
+        //then destroy the list, it might try to free the children
+        //so we'll copy instead
+        igraph_t child;
+        igraph_copy(&child,igraph_graph_list_get_ptr(&components,i));
+        subGraphVec.emplace_back(std::move(child),*this);
+    }
+    igraph_graph_list_destroy(&components);
+    return subGraphVec;
 }
 
 //Removes vertices which have insufficient support
@@ -482,6 +593,7 @@ CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
 //Output    - true if there are cliques meeting the criteria, false otherwise
 bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     assertOwnership();
+    assertConstructed();
     std::vector<std::set<igraph_int_t>> cliques;
     std::set<igraph_int_t> nodeIdx; 
     for(igraph_int_t i = 0; i < this->vcount(); i++){
