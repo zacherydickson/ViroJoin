@@ -112,20 +112,20 @@ public:
     //TODO: Split Graph into connected components before clique ID
     //TODO: ADD edges with a sliding window
     void constructEdges();
-    std::vector<CBPGraph> decompose(int minVertex) const;
+    std::vector<CBPGraph> decompose(int minVertex);
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
     void write_edgelist(FILE * outstream) const {
         igraph_write_graph_edgelist(&graph,outstream);
     }
 private:
-    void assertConstructed() const;
     void assertOwnership() const;
     void BronKerbosh2 ( std::set<igraph_int_t> R,
                         std::set<igraph_int_t> P,
                         std::set<igraph_int_t> X,
                         std::vector<std::set<igraph_int_t>> & res) const;
     void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    void ensureConstructed();
     void ensureValidLookup();
     static bool fragsets_are_comparable(    std::vector<std::string> fragVec1,
                                             std::vector<std::string> fragVec2);
@@ -213,12 +213,6 @@ CBPGraph& CBPGraph::operator=(CBPGraph&& other) {
 }
 
 
-void CBPGraph::assertConstructed() const {
-    if(!(flag & VALID_EDGES)){
-        throw std::logic_error("Attempt to call edge requiring function without valid edges");
-    }
-}
-
 //Checks that this object owns its underlying graph and can make changes
 void CBPGraph::assertOwnership() const { 
     if(!(flag & OWNS_GRAPH)) {
@@ -304,6 +298,8 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
     if(!bOnline){
         flag &= ~VALID_EDGES;
     }
+    //nonAdjVerticies should be empty if offline
+    if(!nonAdjVertices.size()) { return; }
 
     //Regardless of whether a new vertex was added, new edges may be formed
     //  OR
@@ -428,6 +424,13 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
 
 void CBPGraph::constructEdges() {
     assertOwnership();
+    //Don't construct if the edges are already valid
+    if(flag & VALID_EDGES){ return; }
+    //Remove any pre-existing edges
+    if(this->ecount()){
+        igraph_delete_edges(&graph,igraph_ess_all(IGRAPH_EDGEORDER_ID));
+    }
+    //There are no edges in an empty or singular graph as loops are forbidden
     if(this->vcount() < 2){
         flag |= VALID_EDGES;
         return;
@@ -476,13 +479,17 @@ void CBPGraph::ensureValidLookup() {
     flag |= VALID_LOOKUP;
 }
 
+void CBPGraph::ensureConstructed() {
+    if((flag & VALID_EDGES)){ return; }
+    this->constructEdges();
+}
 
 //Construct subgraphs of minimum size from each connected component of this graph
 //Input - a threshold number of vertexes
 //Output a vector of subgraphs, empty if no subgraphs have enough
 //vertexes
-std::vector<CBPGraph> CBPGraph::decompose(int minVertex) const {
-    assertConstructed();
+std::vector<CBPGraph> CBPGraph::decompose(int minVertex) {
+    ensureConstructed();
     std::vector<CBPGraph> subGraphVec;
     //Calculate the components
     igraph_graph_list_t components;
@@ -593,7 +600,7 @@ CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
 //Output    - true if there are cliques meeting the criteria, false otherwise
 bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     assertOwnership();
-    assertConstructed();
+    ensureConstructed();
     std::vector<std::set<igraph_int_t>> cliques;
     std::set<igraph_int_t> nodeIdx; 
     for(igraph_int_t i = 0; i < this->vcount(); i++){
