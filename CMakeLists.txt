@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 project(ViroJoin)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pthread")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_SOURCE_DIR ${CMAKE_BINARY_DIR}/src)
@@ -64,3 +64,5 @@ target_link_libraries(edge_mapper "${HTS_LIB}")
 target_link_libraries(extract_clips "${HTS_LIB}")
 target_link_libraries(extract_regions "${HTS_LIB}" "${IGRAPH_LIB}")
 target_link_libraries(filter "${HTS_LIB}")
+
+#target_compile_features(enumerate_edges_via_fragments PUBLIC cxx_std_11)
