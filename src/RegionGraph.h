@@ -102,6 +102,7 @@ struct EdgeProps {
     double weight;
     bool fromSplit;
     std::vector<std::string> assocFragGroups;
+    std::pair<igraph_int_t,igraph_int_t> endpoints;
 };
 
     //Members
@@ -113,6 +114,7 @@ protected:
     uint8_t flag;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
     std::multimap<std::string, igraph_integer_t> vertex_by_fragment;
+    std::vector<EdgeProps> queuedEdges;
     //std::vector<VertexProps> vertices;
     
 //Con-/Destruction
@@ -140,12 +142,11 @@ public:
     void addOrUpdateVertex(const VertexProps & prop);
     void filterEdges( double minWeight, double splitBonus);
     void mergeUninformitiveOverlap();
-    void write_edgelist(FILE * outstream) const {
-        igraph_write_graph_edgelist(&graph,outstream);
-    }
+    void ensureConstructed();
+    void write_edgelist(FILE * outstream) const;
 private:
     void assertOwnership();
-    void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    void checkAndQueueEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
     void ensureValidLookup();
     void init_attribute_table();
     static std::vector<std::string> intersectFragmentGroups(
@@ -235,7 +236,7 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
 
     // Check against relevant pre-existing vertices to evaluate edge creations
     for (igraph_int_t old_vid : vertexWithFragmentSet){
-        checkAndCreateEdge(old_vid, new_vid);
+        checkAndQueueEdge(old_vid, new_vid);
     }
 }
 
@@ -248,7 +249,7 @@ void CRegionGraph::addOrUpdateVertex(const VertexProps & prop) {
 
 
 // Evaluates window overlaps and constructs a weighted edge if conditions match
-void CRegionGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
+void CRegionGraph::checkAndQueueEdge(  igraph_integer_t v1_id,
                                     igraph_integer_t v2_id)
 {
     //No self edges
@@ -264,19 +265,47 @@ void CRegionGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     //Adding edges always follows adding a vertex so edges cannot already exist 
     //Also edges are only checked between verticies which share fragments
     //So as long as they are not in the same graph part, we are a go
-    igraph_integer_t new_eid = igraph_ecount(&graph);
-    igraph_add_edge(&graph, v1_id, v2_id);
+    igraph_integer_t new_eid = igraph_ecount(&graph) + queuedEdges.size();
+    queuedEdges.emplace_back();
+    EdgeProps & props = queuedEdges.back();
+    props.id = new_eid;
+    props.endpoints = {v1_id,v2_id};
 
     std::vector<std::string> fGSVec = CRegionGraph::intersectFragmentGroups(
                                         v1.assocFragGroups,v2.assocFragGroups);
     //No shared fragment groups 
     if(!fGSVec.size()){ return; }
 
-    std::string assocFrag = strjoin(fGSVec.begin(), fGSVec.end(), FragDelim);
 
-    SETEAN(&graph, "weight", new_eid, fGSVec.size());
-    SETEAB(&graph, "FromSplit", new_eid, v1.fromSplit || v2.fromSplit);
-    SETEAS(&graph, "assocFragGrps", new_eid, assocFrag.c_str());
+    props.weight = fGSVec.size();
+    props.fromSplit = v1.fromSplit || v2.fromSplit;
+    props.assocFragGroups = fGSVec;
+}
+
+//If there are any queued edges
+//the graph is updated with the edges
+void CRegionGraph::ensureConstructed() {
+    //No edges to update
+    if(!queuedEdges.size()){ return; }
+    assertOwnership();
+    igraph_vector_int_t adjList;
+    igraph_vector_int_init(&adjList,queuedEdges.size() * 2);
+    size_t counter = 0;
+    for(auto & props : queuedEdges){
+        VECTOR(adjList)[counter++] = props.endpoints.first;
+        VECTOR(adjList)[counter++] = props.endpoints.second;
+    }
+    igraph_add_edges(&graph,&adjList,nullptr);
+    igraph_vector_int_destroy(&adjList);
+
+    for(auto & props : queuedEdges){
+        std::string assocFrag = strjoin(props.assocFragGroups.begin(),
+                                        props.assocFragGroups.end(), FragDelim);
+        SETEAN(&graph, "weight", props.id, props.weight);
+        SETEAB(&graph, "FromSplit", props.id, props.fromSplit);
+        SETEAS(&graph, "assocFragGrps", props.id, assocFrag.c_str());
+    }
+    queuedEdges.clear();
 }
 
 //Checks if the unique vertex lookup is valid, and rebuilds it if not
@@ -295,6 +324,7 @@ void CRegionGraph::ensureValidLookup() {
 
 //Removes edges which do not have sufficient support
 void CRegionGraph::filterEdges( double minWeight, double splitBonus) {
+    ensureConstructed();
     std::vector<igraph_int_t> toFilter;
     for(igraph_int_t id = 0; id < this->ecount(); id++){
         double weight = EAN(&graph,"weight",id);
@@ -428,6 +458,7 @@ CRegionGraph::VertexProps CRegionGraph::get_vertex_properties(int id) const {
 //for which the set of fragments is comparable (|A + B| = max(|A|,|B|)) 
 void CRegionGraph::mergeUninformitiveOverlap() {
     assertOwnership();
+    ensureConstructed();
     std::vector<VertexProps> sortedVertexProps;
     for(igraph_int_t i = 0; i < this->vcount(); i++){
         sortedVertexProps.push_back(this->get_vertex_properties(i));
@@ -497,6 +528,14 @@ void CRegionGraph::mergeUninformitiveOverlap() {
     for(const auto & prop : toAdd){
         this->addOrUpdateVertex(prop);
     }
+}
+
+
+void CRegionGraph::write_edgelist(FILE * outstream) const {
+    if(queuedEdges.size()){
+        throw std::logic_error("Attempt to write edge list before construction\n");
+    }
+    igraph_write_graph_edgelist(&graph,outstream);
 }
 
 #endif // REGION_GRAPH_H
