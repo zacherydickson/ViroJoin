@@ -36,6 +36,7 @@ Could you write c++ code that matches this specification?
 #include <set>
 #include <string>
 #include "str_utils.h"
+#include <unordered_set>
 #include <vector>
 
 
@@ -109,9 +110,6 @@ public:
     void addOrUpdateVertex( int proximalPos, int distalPos, bool isSplit,
                             const std::string & assocFragments,
                             bool bOnline = true);
-    //TODO: Split Graph into connected components before clique ID
-    //TODO: ADD edges with a sliding window
-    void constructEdges();
     std::vector<CBPGraph> decompose(int minVertex);
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
@@ -124,7 +122,10 @@ private:
                         std::set<igraph_int_t> P,
                         std::set<igraph_int_t> X,
                         std::vector<std::set<igraph_int_t>> & res) const;
-    void checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    bool checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    bool checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id,
+                            double s1, double e1, double s2, double e2);
+    void constructEdges();
     void ensureConstructed();
     void ensureValidLookup();
     static bool fragsets_are_comparable(    std::vector<std::string> fragVec1,
@@ -142,6 +143,9 @@ private:
                     this->get_vertex_properties(vid1).assocFragments
                 );
     }
+    void weightEdge(    igraph_int_t eid, igraph_int_t v1_id, igraph_int_t v2_id,
+                        double s1, double e1, double s2,
+                        double e2, double eMin, double sMax);
 };
 
 //DEFINITIONS
@@ -228,6 +232,8 @@ void CBPGraph::assertOwnership() const {
 void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit,
                                     const std::string& assocFragment, bool bOnline)
 {
+    //Skip empty vertexes
+    if(proximalPos == distalPos) {return;}
     assertOwnership();
     auto key = std::make_pair(proximalPos, distalPos);
     ensureValidLookup();
@@ -286,7 +292,7 @@ void CBPGraph::addOrUpdateVertex(   int proximalPos, int distalPos, bool isSplit
         SETVAN(&graph, "ProximalPos", vid, proximalPos);
         SETVAN(&graph, "DistalPos", vid, distalPos);
         SETVAB(&graph, "IsSplit", vid, isSplit);
-        SETVAS(&graph, "cliques", vid, "");
+        SETVAS(&graph, "cliques", vid, "0");
         SETVAS(&graph, "assocFragments", vid, assocFragment.c_str());
 
         if(bOnline){ //Only if we will be adding edges immediately
@@ -317,7 +323,6 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
                                 std::set<igraph_int_t> X,
                                 std::vector<std::set<igraph_int_t>> & res ) const 
 {
-    //std::cerr << R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << res.size() << "\n"; 
     //If there are no more candidate nodes to add
     //this clique is maximal
     if(P.size() + X.size() == 0) {
@@ -331,7 +336,6 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
     /*igraph_int_t pivot =*/
     this->selectPivot(P,Q);
     for( igraph_int_t v : Q) {
-        //std::cerr << "InLOOP w pivot: " << pivot << "\t" <<  R.size() << "\t" << P.size() << "\t" << X.size() << "\t" << Q.size() << "\t"<< res.size() << "\n"; 
         //Identify neighbours (N) of the vertex
         igraph_vs_t vs; // The concept of picking vertices in a graph
         igraph_vit_t vit; // The selection of verteces in this graph
@@ -366,13 +370,23 @@ void CBPGraph::BronKerbosh2 (   std::set<igraph_int_t> R,
 
 
 // Evaluates window overlaps and constructs a weighted edge if conditions match
-void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
+// returns true if an edge was created, false otherwise
+bool CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
                                     igraph_integer_t v2_id)
 {
-    assertOwnership();
-    VertexProps v1 = this->get_vertex_properties(v1_id);
-    VertexProps v2 = this->get_vertex_properties(v2_id);
+    double s1, e1, s2, e2;
+    getWindow(VAN(&graph,"ProximalPos",v1_id), VAB(&graph,"IsSplit",v1_id), s1, e1);
+    getWindow(VAN(&graph,"ProximalPos",v2_id), VAB(&graph,"IsSplit",v2_id), s2, e2);
+    return this->checkAndCreateEdge(v1_id,v2_id,s1,e1,s2,e2);
+}
 
+// Used pre-evaluated windows to construct a weighted edge if conditions match
+// returns true if an edge was created, false otherwise
+bool CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
+                                    igraph_integer_t v2_id,
+                                    double s1, double e1, double s2, double e2)
+{
+    assertOwnership();
     //If the sopport for two separate breakpoint is a completely overlapping set
     //  of fragments (alt-mappings of the same fragment),
     //  then they cannot support the same
@@ -388,37 +402,17 @@ void CBPGraph::checkAndCreateEdge(  igraph_integer_t v1_id,
     //    return;
     //}
 
-    double s1, e1, s2, e2;
-    getWindow(v1.proximalPos, v1.isSplit, s1, e1);
-    getWindow(v2.proximalPos, v2.isSplit, s2, e2);
-
     // Compute the overlapping region
     double s_max = std::max(s1, s2);
     double e_min = std::min(e1, e2);
 
-    if (s_max <= e_min) { // Windows overlap
-        double overlap = e_min - s_max;
-        double len1 = e1 - s1;
-        double len2 = e2 - s2;
+    // Check if Windows do not overlap
+    if (s_max > e_min) { return false; }
 
-        if (len1 > 0 && len2 > 0) {
-            double prop1 = overlap / len1;
-            double prop2 = overlap / len2;
-
-            double weight = prop1 + prop2;
-            
-            // Apply SplitFactor multiplier sequentially for each vertex that has isSplit == true
-            if (v1.isSplit) weight *= splitFactor;
-            if (v2.isSplit) weight *= splitFactor;
-
-            // Add edge to igraph topology
-            igraph_add_edge(&graph, v1_id, v2_id);
-            igraph_integer_t new_eid = igraph_ecount(&graph) - 1;
-
-            // Set edge weight attribute
-            SETEAN(&graph, "weight", new_eid, weight);
-        }
-    }
+    igraph_add_edge(&graph, v1_id, v2_id);
+    //NOTE: In the current implementation, edge weights are not used
+    //weightEdge(igraph_ecount(&graph)-1,s1,e1,s2,e2,e_min,s_max);
+    return true;
 }
 
 
@@ -427,7 +421,8 @@ void CBPGraph::constructEdges() {
     //Don't construct if the edges are already valid
     if(flag & VALID_EDGES){ return; }
     //Remove any pre-existing edges
-    if(this->ecount()){
+    size_t eCount = this->ecount();
+    if(eCount > 0){
         igraph_delete_edges(&graph,igraph_ess_all(IGRAPH_EDGEORDER_ID));
     }
     //There are no edges in an empty or singular graph as loops are forbidden
@@ -435,35 +430,89 @@ void CBPGraph::constructEdges() {
         flag |= VALID_EDGES;
         return;
     }
-    std::vector<igraph_int_t> vertexIds(this->vcount());
-    std::iota(vertexIds.begin(),vertexIds.end(),0);
-    auto proxPosIsLess = [this] (igraph_int_t a, igraph_int_t b) {
-               return VAN(&graph,"ProximalPos",a) < VAN(&graph,"ProximalPos",b);
-            };
-    std::sort(vertexIds.begin(),vertexIds.end(), proxPosIsLess);
-    auto leftIt = vertexIds.begin();
-    //std::cerr << VAN(&graph,"ProximalPos",*leftIt) << "\t" << VAN(&graph,"ProximalPos",vertexIds.back()) << "\n";
-    //size_t counter = 1;
-    while(std::next(leftIt) != vertexIds.end() ) {
-        //if(++counter % 1000 == 1){
-        //    std::cerr << "Edges constructed for " << counter << " of " << vertexIds.size() << "Nodes Checked\r"; 
-        //}
-        auto rightIt = std::next(leftIt);
-        auto lastIt = std::lower_bound(
-                rightIt, vertexIds.end(),
-                VAN(&graph,"ProximalPos",*rightIt) + this->maxInsertSize,
-                [this] (igraph_int_t a, double target) {
-                    return VAN(&graph,"ProximalPos",a) < target;
-                } );
-        //if(lastIt != vertexIds.end()){
-        //    std::cerr << VAN(&graph,"ProximalPos",*rightIt) << "\t" << VAN(&graph,"ProximalPos",*lastIt) << "\n";
-        //}
-        for(; rightIt != lastIt; rightIt++){
-            this->checkAndCreateEdge(*leftIt,*rightIt);
+    
+    //Sweep line implementation
+    //  pass a line from the start of the first interval to the end of the last interval
+    //  whenever the line hits the start of an interval, add that vertex to the
+    //  active list.
+    //  whenever the line hits the end of an interval, create an edge from the terminated vertex
+    //  to all other active vertexes
+    struct event_t {
+        igraph_int_t vid;
+        bool isEnd;
+        double pos;
+    };
+    bool bOpensLeft = GAB(&graph,"OpensLeft");
+    //std::cerr << "Pre Event construct\n";
+    std::vector<event_t> eventVec;
+    eventVec.reserve(this->vcount());
+    for(igraph_int_t vid = 0; vid < this->vcount(); vid++){
+        std::pair<double,double> window;
+        this->getWindow(VAN(&graph,"ProximalPos",vid),VAB(&graph,"IsSplit",vid),
+                            window.first,window.second);
+        if(bOpensLeft){ //Put the window in the order upstream, downstream
+            std::swap(window.first, window.second);
+            window.first *= -1;
+            window.second *= -1;
         }
-        leftIt++;
+        eventVec.push_back({vid,false,window.first});
+        eventVec.push_back({vid,true,window.second});
     }
-    //std::cerr << this->ecount() << "\n";
+    //Sort the events from most upstream to most downstream
+    std::sort(eventVec.begin(),eventVec.end(),
+            [](const event_t & a, const event_t & b){
+                return a.pos < b.pos;
+            } );
+    std::unordered_set<igraph_int_t> activeVertexSet;
+    size_t counter = 0;
+    size_t updateAt = 1000;
+    size_t totalEdges = 0;
+    std::vector<igraph_int_t> adjVec;
+    //Initial guess at the number of edges to be created
+    adjVec.reserve(eventVec.size());
+    for(auto it = eventVec.begin(); it != eventVec.end(); ) {
+        if(counter > updateAt){
+            std::cerr << counter << " of " << eventVec.size() << " events processed; " << totalEdges << "edges created so far\r"; 
+            updateAt = counter + 1000;
+        }
+        std::vector<igraph_int_t> closingVertexSet;
+        //Find the first event at a position higher than this one
+        auto nx = std::next(it);
+        while(nx != eventVec.end() && (nx->pos == it->pos)) {
+            nx++;
+        }
+        //Note all vertexes updated by events at this position
+        for(; it != nx; it++){
+            if(it->isEnd) {
+                closingVertexSet.push_back(it->vid);
+            } else {
+                activeVertexSet.insert(it->vid);
+            }
+            counter++;
+        }
+        //continue if there are no close events
+        if(!closingVertexSet.size()) { continue; }
+        //Construct an adjacency list for edges to add
+        size_t nEdges = (activeVertexSet.size() - 1) * closingVertexSet.size();
+        totalEdges += nEdges;
+        for(igraph_int_t cVid : closingVertexSet){
+            for(igraph_int_t aVid : activeVertexSet) {
+                //Skip self edges
+                if(cVid == aVid) { continue; }
+                adjVec.push_back(cVid);
+                adjVec.push_back(aVid);
+            }
+        }
+        //Remove closing Vertices from the active set
+        for(igraph_int_t vid : closingVertexSet){
+            activeVertexSet.erase(vid);
+        }
+    }
+    igraph_vector_int_t adjList;
+    igraph_vector_int_init_array(&adjList, adjVec.data(), adjVec.size());
+    igraph_add_edges(&graph,&adjList,nullptr);
+    igraph_vector_int_destroy(&adjList);
+
     flag |= VALID_EDGES;
 }
 
@@ -481,7 +530,9 @@ void CBPGraph::ensureValidLookup() {
 
 void CBPGraph::ensureConstructed() {
     if((flag & VALID_EDGES)){ return; }
+    std::cerr << "\t\tStart construction\n";
     this->constructEdges();
+    std::cerr << "\t\tEnd construction\n";
 }
 
 //Construct subgraphs of minimum size from each connected component of this graph
@@ -494,7 +545,9 @@ std::vector<CBPGraph> CBPGraph::decompose(int minVertex) {
     //Calculate the components
     igraph_graph_list_t components;
     igraph_graph_list_init(&components,0);
+    //igraph_set_progress_handler(igraph_progress_handler_stderr);
     igraph_decompose(&graph, &components, IGRAPH_WEAK, -1, minVertex);
+    //igraph_set_progress_handler(nullptr);
     //Construct the children
     for(igraph_int_t i =0; i < igraph_graph_list_size(&components); i++){
         //The list owns its elements, so if we moved the items out
@@ -579,10 +632,17 @@ bool CBPGraph::fragsets_are_comparable( std::vector<std::string> fragVec1,
 }
 
 CBPGraph::VertexProps CBPGraph::get_vertex_properties(int id) const {
+    if(id >= this->vcount()){
+        throw std::invalid_argument("Attempt to get vertex properties for a vertex outside of the graph");
+    }
     std::vector<std::string> cliqueStrs = strsplit(VAS(&graph,"cliques",id),DupDelim);
     std::vector<int> cliqueAssignVec;
     for(auto cliqueStr : cliqueStrs){
+        try {
         cliqueAssignVec.push_back(std::stoi(cliqueStr));
+        } catch (std::invalid_argument &e ) {
+            throw std::invalid_argument(std::string(e.what()) + " " + cliqueStr);
+        }
     }
     return {    id,
                 int(std::lround(VAN(&graph,"ProximalPos",id))),
@@ -610,7 +670,9 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     //The igraph implementation is at least 3x faster...
     igraph_vector_int_list_t cliq;
     igraph_vector_int_list_init(&cliq,0);
+    //igraph_set_progress_handler(igraph_progress_handler_stderr);
     igraph_maximal_cliques(&graph,&cliq,int(minVertex - splitBonus),IGRAPH_UNLIMITED,IGRAPH_UNLIMITED);
+    //igraph_set_progress_handler(nullptr);
     for(int i = 0; i < igraph_vector_int_list_size(&cliq); i++){
         cliques.push_back(std::set<igraph_int_t>());
         igraph_vector_int_t * ptr = igraph_vector_int_list_get_ptr(&cliq,i);
@@ -646,7 +708,7 @@ bool CBPGraph::maximalCliques( double minVertex, double splitBonus) {
     for(igraph_int_t id = 0; id < this->vcount(); id++){
         //Set the clique to empty for any vertexes not in a valid clique
         if(!cliqueMap.count(id)) { 
-            SETVAS(&graph,"cliques",id,"");
+            SETVAS(&graph,"cliques",id,"0");
             continue;
         }
         auto range = cliqueMap.equal_range(id);
@@ -696,7 +758,6 @@ void CBPGraph::removeSharedFragEdges(std::string frag, igraph_int_t vid) {
 igraph_int_t CBPGraph::selectPivot( const std::set<igraph_int_t> & P,
                                     std::set<igraph_int_t> &symDiff) const
 {
-    //std::cerr << "Sececting pivot: " << P.size() << "\n";
     symDiff = P;
     igraph_int_t bestPivot = *P.begin();
     for(igraph_int_t pivot : P){
@@ -721,5 +782,27 @@ igraph_int_t CBPGraph::selectPivot( const std::set<igraph_int_t> & P,
 }
 
 
+void CBPGraph::weightEdge(  igraph_int_t eid, igraph_int_t v1_id, igraph_int_t v2_id,
+                            double s1, double e1, double s2,
+                            double e2, double eMin, double sMax)
+{
+    double overlap = eMin - sMax;
+    double len1 = e1 - s1;
+    double len2 = e2 - s2;
+
+    //Empty intervals are prevented in addOrUpdateVertex
+    //  so len1 and len2 are always positive
+    double prop1 = overlap / len1;
+    double prop2 = overlap / len2;
+
+    double weight = prop1 + prop2;
+    
+    // Apply SplitFactor multiplier sequentially for each vertex that has isSplit == true
+    if (VAB(&graph,"IsSplit",v1_id)) weight *= splitFactor;
+    if (VAB(&graph,"IsSplit",v2_id)) weight *= splitFactor;
+
+    // Set edge weight attribute
+    SETEAN(&graph, "weight", eid, weight);
+}
 
 #endif // BREAKPOINT_GRAPH_H
