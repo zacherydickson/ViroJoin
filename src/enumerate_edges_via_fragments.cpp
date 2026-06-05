@@ -102,16 +102,19 @@ std::unordered_set<std::string> VirusNameSet;
 //==== FUNCTION DECLARATIONS
 
 bool ClusterBPGraph(CBPGraph & graph);
-void ClusterBPGraphs(BPGraphMap_t & graphMap);
-void ConnectBPGraphs(BPGraphMap_t & graphMap);
+bool ClusterBPGraphs(BPGraphMap_t & graphMap);
+//void ConnectBPGraphs(BPGraphMap_t & graphMap);
 CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap);
 CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap);
+BPGraphMap_t DecomposeBPGraph(  const std::string & baseLabel,
+                                CBPGraph & graph);
 bool DecomposeBPGraphs(BPGraphMap_t & graphMap);
+bool DecomposeBPGraphs(BPGraphMap_t & graphMap, ctpl::thread_pool & threadPool);
 bool FilterBPGraph(CBPGraph & graph);
 bool FilterBPGraphs(BPGraphMap_t & graphMap);
-bool FilterAndClusterBPGraph(int id, CBPGraph & graph, bool bOnline);
-void FilterAndClusterBPGraphs(  size_t nThread, BPGraphMap_t & graphMap,
-                                bool bOnline);
+bool FilterAndClusterBPGraph(CBPGraph & graph);
+bool ProcessBPGraphs(BPGraphMap_t & graphMap);
+bool ProcessBPGraphs(size_t nThread, BPGraphMap_t & graphMap);
 void FilterRegions(jRegMap_t & regionMap);
 #ifndef NDEBUG
 void OutputDebugBPGraph(const BPGraphMap_t & graphMap,
@@ -189,15 +192,19 @@ int main(int argc, char* argv[]) {
     bool bOnline = false;
     BPGraphMap_t graphMap = LoadBPGraphs(candidate_file_name,bOnline);
 
+    //std::cerr
+    //for(auto it = graphMap.begin(); it != graphMap.end();){
+    //    if(it->first == "NC_007605.1R"){
+    //        it++;
+    //    } else {
+    //        it = graphMap.erase(it);
+    //    }
+    //}
+
     if(nThread == 1){ //Single Threaded version - maybe avoid some overhead
-        if(!bOnline) { ConnectBPGraphs(graphMap); }
-        DecomposeBPGraphs(graphMap);
-        if(FilterBPGraphs(graphMap)){
-            ClusterBPGraphs(graphMap);
-        }
+        ProcessBPGraphs(graphMap);
     } else { //MultiThreaded Version
-             //TODO: Implement Multithreaded version!
-        FilterAndClusterBPGraphs(nThread,graphMap,bOnline);
+        ProcessBPGraphs(nThread,graphMap);
     }
 #ifndef NDEBUG
     OutputDebugBPGraph(graphMap,BPAdjFileName,BPVertFileName);
@@ -224,10 +231,11 @@ bool ClusterBPGraph(CBPGraph & graph) {
 //Filters each graph in a graph map
 //Inputs    - a graph map containing graphs to filter
 //Output    - None, modifies the input
-void ClusterBPGraphs(BPGraphMap_t & graphMap) {
+bool ClusterBPGraphs(BPGraphMap_t & graphMap) {
     fprintf(stderr,"Clustering fragments within graphs ...\n");
     //int counter = 0;
     for(auto it = graphMap.begin(); it != graphMap.end(); ){
+        fprintf(stderr,"Clustering graph with %d nodes and %d edges ...\n",it->second.vcount(),it->second.ecount());
         if(ClusterBPGraph(it->second)){ 
             it++;
         } else {
@@ -235,16 +243,17 @@ void ClusterBPGraphs(BPGraphMap_t & graphMap) {
         }
     }
     fprintf(stderr,"After clustering %lu graphs remain\n",graphMap.size());
+    return (graphMap.size() > 0);
 }
 
-void ConnectBPGraphs(BPGraphMap_t & graphMap) {
-    fprintf(stderr,"\nConstructing edges in the graphs ...\n");
-    for(auto & pair : graphMap){
-        fprintf(stderr,"Constructing edges for the graph on %s ... %-10s\r",pair.first.c_str(),"");
-        pair.second.constructEdges();
-    }
-    fprintf(stderr,"\n");
-}
+//void ConnectBPGraphs(BPGraphMap_t & graphMap) {
+//    fprintf(stderr,"Constructing edges in the graphs ...\n");
+//    for(auto & pair : graphMap){
+//        fprintf(stderr,"Constructing edges for the graph on %s ... %-10s\r",pair.first.c_str(),"");
+//        pair.second.constructEdges();
+//    }
+//    fprintf(stderr,"\n");
+//}
 
 //Takes the cliques generated in the graph map and builds regions from them
 //Which are then placed into a bipartite graph of host and viral regions
@@ -296,7 +305,7 @@ CRegionGraph ConstructRegionGraph(const BPGraphMap_t & graphMap) {
 
 CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap) {
     CRegionGraph regGraph = ConstructRegionGraph(graphMap);
-    fprintf(stderr,"Merging uninformatively diffferent overlapping regions ...\n");
+    fprintf(stderr,"Merging uninformatively different overlapping regions ...\n");
     regGraph.mergeUninformitiveOverlap();
     fprintf(stderr,"After merging, %d regions and %d edges remain ...\n", regGraph.vcount(), regGraph.ecount());
     fprintf(stderr,"Filtering low support edges ...\n");
@@ -305,22 +314,53 @@ CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap) {
     return regGraph;
 }
 
+BPGraphMap_t DecomposeBPGraph(  const std::string & baseLabel,
+                                CBPGraph & graph)
+{
+    BPGraphMap_t res;
+    //std::cerr << "\tStart Decompose for " << baseLabel << "\n";
+    std::vector<CBPGraph> resVec = graph.decompose(int(MinimumReads - SplitBonus));
+    for(size_t i = 0; i < resVec.size(); i++){
+        std::string label = baseLabel + "_" + std::to_string(i);
+        res.emplace(label, std::move(resVec[i]));
+    }
+    //std::cerr << "\tEnd Decompose for " << baseLabel << "\n";
+    return res;
+}
+
 //Separates each graph in the graph map into separate graphs as connected
 //components, only components with enough vertexes are retained
 //Output - true if there are still graphs remaining, false otherwise
 bool DecomposeBPGraphs(BPGraphMap_t & graphMap) {
+    fprintf(stderr,"Decomposing graphs into connected components...\n");
     BPGraphMap_t tmp;
     while(graphMap.size()) {
         auto it = graphMap.begin();
-        std::vector<CBPGraph> res = it->second.decompose(int(MinimumReads - SplitBonus));
-        for(size_t i = 0; i < res.size(); i++){
-            std::string label = it->first + "_" + std::to_string(i);
-            tmp.emplace(label, std::move(res[i]));
-        }
+        tmp.merge(DecomposeBPGraph(it->first,it->second));
         graphMap.erase(it);
     }
     std::swap(tmp,graphMap);
+    fprintf(stderr,"After decomposition, there are %lu graphs...\n",graphMap.size());
     return (graphMap.size() > 0);
+}
+
+bool DecomposeBPGraphs(BPGraphMap_t & graphMap, ctpl::thread_pool & threadPool) {
+    fprintf(stderr,"Decomposing Breakpoint Graphs ...\n");
+    BPGraphMap_t tmp;
+    std::vector<std::future<BPGraphMap_t>> decompFutureVec;
+    for(auto it = graphMap.begin(); it != graphMap.end(); it++) {
+        std::future<BPGraphMap_t> future = threadPool.push(
+                [it](int id) { return DecomposeBPGraph(it->first,it->second); } ); 
+        decompFutureVec.push_back(std::move(future));
+    }
+    //Retain the split graphs
+    for(auto & future : decompFutureVec){
+        tmp.merge(future.get());
+    }
+    fprintf(stderr,"After decomposition, there are %lu graphs ...\n",tmp.size());
+    if(!tmp.size()){ return false; }
+    std::swap(tmp,graphMap);
+    return true;
 }
 
 //Given a graph, filters undersupported vertexes, and if sufficient support remains
@@ -328,24 +368,34 @@ bool DecomposeBPGraphs(BPGraphMap_t & graphMap) {
 //Inputs - an arbitrary id for the function call
 //       a CBPGraph object on which to operate
 //Output - true if there are cliques with sufficent support, false otherwise
-bool FilterAndClusterBPGraph(int id, CBPGraph & graph, bool bOnline) {
-    if(!bOnline) { graph.constructEdges(); }
+bool FilterAndClusterBPGraph(CBPGraph & graph) {
     if(!FilterBPGraph(graph)){ return false; }
-    return ClusterBPGraph(graph);
+    //return ClusterBPGraph(graph);
+    return true;
+}
+
+
+//Single theaded processing of BPGraphs
+bool ProcessBPGraphs(BPGraphMap_t & graphMap) {
+    if(!DecomposeBPGraphs(graphMap)) { return false ; }
+    if(!FilterBPGraphs(graphMap)) { return false;}
+    //return ClusterBPGraphs(graphMap);
+    return true;
 }
 
 //Multithreaded processing of BP graphs to identify regions
-void FilterAndClusterBPGraphs(  size_t nThread, BPGraphMap_t & graphMap,
-                                bool bOnline)
+bool ProcessBPGraphs(size_t nThread, BPGraphMap_t & graphMap)
 {
-    fprintf(stderr,"Filtering and Clustering Breakpoint Graphs ...\n");
     ctpl::thread_pool threadPool(nThread);
+    //In parallel Decompose each graph, and stop if there are no graphs left
+    if(!DecomposeBPGraphs(graphMap,threadPool) ) { return false;}
+    fprintf(stderr,"Filtering and Clustering Breakpoint Graphs ...\n");
     //Launch processes for each graph
     std::map<std::string,std::future<bool>> futureMap;
-    for(auto & pair : graphMap){
+    for(auto it = graphMap.begin(); it != graphMap.end(); it++){
         std::future<bool> future = threadPool.push(
-                FilterAndClusterBPGraph,std::ref(pair.second),bOnline);
-        futureMap.insert({pair.first,std::move(future)});
+                [it](int id) {return FilterAndClusterBPGraph(it->second);} );
+        futureMap.insert({it->first,std::move(future)});
     }
     //Note which graphs have insufficient support
     std::vector<std::string> toFilter;
@@ -362,6 +412,7 @@ void FilterAndClusterBPGraphs(  size_t nThread, BPGraphMap_t & graphMap,
         graphMap.erase(contig);
     }
     fprintf(stderr,"After clustering, %lu Breakpoint Graphs remain\n", graphMap.size());
+    return (graphMap.size() > 0);
 }
 
 //Ensures that every vertex within a graph has sufficient edges to contribute to 
@@ -476,7 +527,6 @@ void FilterRegions(jRegMap_t & regionMap){
 BPGraphMap_t LoadBPGraphs(const std::string & fname,bool bOnline) {
     //std::cerr << "Loading graphs ..." << "\n";
     fprintf(stderr,"Loading Graphs ...\n");
-    //TODO: THIS NEEDS A MAJOR SPEEDUP
     std::ifstream in(fname);
     BPGraphMap_t graphByContig;
     std::string bedpeStr;
