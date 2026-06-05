@@ -464,17 +464,17 @@ void CBPGraph::constructEdges() {
                 return a.pos < b.pos;
             } );
     std::unordered_set<igraph_int_t> activeVertexSet;
-    size_t counter = 0;
-    size_t updateAt = 1000;
-    size_t totalEdges = 0;
+    //size_t counter = 0;
+    //size_t updateAt = 1000;
+    //size_t totalEdges = 0;
     std::vector<igraph_int_t> adjVec;
     //Initial guess at the number of edges to be created
     adjVec.reserve(eventVec.size());
     for(auto it = eventVec.begin(); it != eventVec.end(); ) {
-        if(counter > updateAt){
-            std::cerr << counter << " of " << eventVec.size() << " events processed; " << totalEdges << "edges created so far\r"; 
-            updateAt = counter + 1000;
-        }
+        //if(counter > updateAt){
+        //    std::cerr << counter << " of " << eventVec.size() << " events processed; " << totalEdges << "edges created so far\r"; 
+        //    updateAt = counter + 1000;
+        //}
         std::vector<igraph_int_t> closingVertexSet;
         //Find the first event at a position higher than this one
         auto nx = std::next(it);
@@ -488,13 +488,13 @@ void CBPGraph::constructEdges() {
             } else {
                 activeVertexSet.insert(it->vid);
             }
-            counter++;
+            //counter++;
         }
         //continue if there are no close events
         if(!closingVertexSet.size()) { continue; }
         //Construct an adjacency list for edges to add
-        size_t nEdges = (activeVertexSet.size() - 1) * closingVertexSet.size();
-        totalEdges += nEdges;
+        //size_t nEdges = (activeVertexSet.size() - 1) * closingVertexSet.size();
+        //totalEdges += nEdges;
         for(igraph_int_t cVid : closingVertexSet){
             for(igraph_int_t aVid : activeVertexSet) {
                 //Skip self edges
@@ -530,9 +530,9 @@ void CBPGraph::ensureValidLookup() {
 
 void CBPGraph::ensureConstructed() {
     if((flag & VALID_EDGES)){ return; }
-    std::cerr << "\t\tStart construction\n";
+    //std::cerr << "\t\tStart construction\n";
     this->constructEdges();
-    std::cerr << "\t\tEnd construction\n";
+    //std::cerr << "\t\tEnd construction\n";
 }
 
 //Construct subgraphs of minimum size from each connected component of this graph
@@ -545,9 +545,7 @@ std::vector<CBPGraph> CBPGraph::decompose(int minVertex) {
     //Calculate the components
     igraph_graph_list_t components;
     igraph_graph_list_init(&components,0);
-    //igraph_set_progress_handler(igraph_progress_handler_stderr);
     igraph_decompose(&graph, &components, IGRAPH_WEAK, -1, minVertex);
-    //igraph_set_progress_handler(nullptr);
     //Construct the children
     for(igraph_int_t i =0; i < igraph_graph_list_size(&components); i++){
         //The list owns its elements, so if we moved the items out
