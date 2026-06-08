@@ -111,6 +111,7 @@ public:
                             const std::string & assocFragments,
                             bool bOnline = true);
     std::vector<CBPGraph> decompose(int minVertex);
+    void ensureConstructed();
     void filterVertices( double minDegree, double splitBonus);
     bool maximalCliques(  double minVertex, double splitBonus);
     void write_edgelist(FILE * outstream) const {
@@ -126,7 +127,6 @@ private:
     bool checkAndCreateEdge(igraph_integer_t v1_id, igraph_integer_t v2_id,
                             double s1, double e1, double s2, double e2);
     void constructEdges();
-    void ensureConstructed();
     void ensureValidLookup();
     static bool fragsets_are_comparable(    std::vector<std::string> fragVec1,
                                             std::vector<std::string> fragVec2);
