@@ -143,6 +143,7 @@ public:
     void filterEdges( double minWeight, double splitBonus);
     void mergeUninformitiveOverlap();
     void ensureConstructed();
+    static CRegionGraph merge_graphs(const std::vector<CRegionGraph> & graphVec);
     void write_edgelist(FILE * outstream) const;
 private:
     void assertOwnership();
@@ -530,6 +531,102 @@ void CRegionGraph::mergeUninformitiveOverlap() {
     }
 }
 
+
+CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphVec) {
+    //Collate information from the graphs
+    size_t totalVertices = 0;
+    std::vector<igraph_int_t> adjVec;
+    std::vector<VertexProps> vPropVec;
+    std::vector<EdgeProps> ePropVec;
+    //Iterate over each graph and store the adjacency information
+    //  as well as vertex and edge properties
+    for(const CRegionGraph & graphObj : graphVec) {
+        igraph_adjlist_t adjList;
+        //documentation says performance hit from not using LOOPS, or MULTIPLE
+        //Construction of graphs should prevent such edges anyway
+        igraph_adjlist_init(&graphObj.graph,&adjList,IGRAPH_ALL,IGRAPH_LOOPS_TWICE,IGRAPH_MULTIPLE);
+        igraph_int_t adjListSize = igraph_adjlist_size(&adjList);
+        //Copy the adjacency list, with vertices offset
+        //Also retain the vertex and edge attributes
+        size_t futureTotalV = vPropVec.size() + adjListSize;
+        vPropVec.resize(futureTotalV);
+        //Iterate over node ids in the graph
+        for(igraph_int_t i = 0; i < adjListSize; i++){
+            igraph_int_t vid = i+totalVertices;
+            //Store vertex properties
+            vPropVec[vid] = graphObj.get_vertex_properties(i);
+            vPropVec[vid].id = vid;
+            //Resize vectors
+            igraph_vector_int_t * vec_ptr = igraph_adjlist_get(&adjList,i);
+            igraph_int_t vecSize = igraph_vector_int_size(vec_ptr);
+            //Iterate over neighbours
+            for(igraph_int_t j = 0; j < vecSize; j++){
+                //Get the vid of the neighbour
+                igraph_int_t n = VECTOR(*vec_ptr)[j];
+                //Only count undirected edges once (when the lower index vertex is checked)
+                if(n <= i){ continue; }
+                adjVec.push_back(i + totalVertices);
+                adjVec.push_back(n + totalVertices);
+                //Get the edge info for the edge between node i and n
+                igraph_vector_int_t eids;
+                igraph_get_all_eids_between(&(graphObj.graph),&eids,i,n,
+                                            IGRAPH_UNDIRECTED);
+                //Assumes there is only one edge between any given pair of nodes
+                igraph_int_t eid;
+                igraph_get_eid(&(graphObj.graph),&eid,i,n,IGRAPH_UNDIRECTED,false);
+                if(eid == -1) {continue; }
+                igraph_int_t mergedEid = ePropVec.size();
+                ePropVec.push_back(graphObj.get_edge_properties(eid));
+                ePropVec.back().id = mergedEid;
+            }
+        }
+        totalVertices = futureTotalV;
+        //Cleanup
+        igraph_adjlist_destroy(&adjList);
+    }
+
+    //Construct a combined igraph_adjlist_t object
+    //igraph_adjlist_t merged_adjlist;
+    //igraph_adjlist_init_empty(&merged_adjlist,totalVertices);
+    //for(size_t vid1 = 0; vid1 < mergedAdjList.size(); vid1++){
+    //    igraph_vector_int_t * vec_ptr = igraph_adjlist_get(merged_adjlist,vid1);
+    //    for(igraph_int_t vid2 : mergedAdjList[vid1]){
+    //        igraph_vector_int_push_back(vec_ptr,vid2);
+    //    }
+    //}
+    //Create an igraph_vector_int_t object
+    igraph_vector_int_t edges = igraph_vector_int_view(adjVec.data(),adjVec.size());
+    //Construct the merged graph
+    CRegionGraph mergedRegGraph;
+    mergedRegGraph.flag &= ~VALID_LOOKUP;
+    igraph_t & mergedGraph = mergedRegGraph.graph;
+    igraph_empty(&mergedGraph,totalVertices,IGRAPH_UNDIRECTED);
+    igraph_add_edges(&mergedGraph, &edges, nullptr);
+    //Update the vertex information of the merged graph
+    for(const VertexProps & vProp : vPropVec){
+        std::string assocFragStr = strjoin(vProp.assocFragGroups.begin(),
+                                           vProp.assocFragGroups.end(),
+                                           FragDelim);
+        SETVAS(&mergedGraph, "Chromosome", vProp.id, vProp.chromosome.c_str());
+        SETVAB(&mergedGraph, "OpensLeft", vProp.id, vProp.opensLeft);
+        SETVAB(&mergedGraph, "FromSplit", vProp.id, vProp.fromSplit);
+        SETVAB(&mergedGraph, "IsHost", vProp.id, vProp.isHost);
+        SETVAN(&mergedGraph, "Left", vProp.id, vProp.left);
+        SETVAN(&mergedGraph, "Right", vProp.id, vProp.right);
+        SETVAS(&mergedGraph, "assocFragGrps", vProp.id, assocFragStr.c_str());
+    }
+
+    //Update the edge information of the merged graph
+    for(const EdgeProps & eProp  : ePropVec){
+        std::string assocFrag = strjoin(eProp.assocFragGroups.begin(),
+                                        eProp.assocFragGroups.end(), FragDelim);
+        SETEAN(&mergedGraph, "weight", eProp.id, eProp.weight);
+        SETEAB(&mergedGraph, "FromSplit", eProp.id, eProp.fromSplit);
+        SETEAS(&mergedGraph, "assocFragGrps", eProp.id, assocFrag.c_str());
+    }
+    //Return the merged graph
+    return mergedRegGraph;
+}
 
 void CRegionGraph::write_edgelist(FILE * outstream) const {
     if(queuedEdges.size()){
