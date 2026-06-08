@@ -14,80 +14,16 @@
 
 //==== TYPE DECLARATIONS
 
-struct jRegLabel_t {
-    std::string chr;
-    size_t distPos;
-    size_t proxPos;
-    bool opensLeft;
-    bool isSplit;
-    int compare(const jRegLabel_t & other, size_t dist = 0) const {
-	if(this->chr != other.chr) {
-	    return (this->chr < other.chr) ? -1 : 1;
-	}
-	if(this->opensLeft != other.opensLeft) {
-	    return (this->opensLeft) ? 1 : -1;
-	}
-	if(this->proxPos > other.proxPos && this->proxPos - other.proxPos > dist) return 1;
-	if(this->proxPos < other.proxPos && other.proxPos - this->proxPos > dist) return -1;
-	if(this->distPos > other.distPos && this->distPos - other.distPos > dist) return 1;
-	if(this->distPos < other.distPos && other.distPos - this->distPos > dist) return -1;
-        if(this->isSplit != other.isSplit){
-            return (this->isSplit) ? 1 : -1;
-        }
-	return 0;
-    }
-};
-
-struct jRegLabel_EqFunctor {
-    bool operator()(const jRegLabel_t & a, const jRegLabel_t & b) const {
-	return (a.compare(b) == 0);
-    }
-};
-
-struct jRegLabel_HashFunctor {
-    size_t operator()(const jRegLabel_t & a) const {
-	return std::hash<std::string>{}(
-                a.chr + std::to_string(a.opensLeft << 1 | a.isSplit) +
-                std::to_string(a.proxPos) + std::to_string(a.distPos)
-        );
-    }
-};
-
-struct junctionRegion_t {
-    junctionRegion_t() : left(0), right(0), nSplit(0) {}
-    junctionRegion_t(size_t pos)
-	: left(pos), right(pos), nSplit(0) {}
-    junctionRegion_t(const junctionRegion_t & other)
-	:   left(other.left), right(other.right), nSplit(other.nSplit),
-	    QNameSet(other.QNameSet) {}
-    size_t left;
-    size_t right;
-    size_t nSplit;
-    std::unordered_set<std::string> QNameSet;
-};
-
-
-typedef std::vector<jRegLabel_t> jRegLabelVector_t;
-typedef std::unordered_map< jRegLabel_t,size_t,jRegLabel_HashFunctor,
-			    jRegLabel_EqFunctor>
-	    jRegLabelCount_t;
-typedef std::unordered_map< jRegLabel_t,bool,jRegLabel_HashFunctor,
-			    jRegLabel_EqFunctor>
-	    jRegSplitStatus_t;
-typedef std::unordered_map< jRegLabel_t,junctionRegion_t,jRegLabel_HashFunctor,
-			    jRegLabel_EqFunctor>
-	    jRegMap_t;
-typedef std::unordered_set< jRegLabel_t, jRegLabel_HashFunctor,
-			    jRegLabel_EqFunctor>
-	    jRegLabelSet_t;
-typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
-			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
-	    BestJRegSetMap_t;
-typedef std::unordered_map< jRegLabel_t, jRegLabelSet_t,
-			    jRegLabel_HashFunctor,jRegLabel_EqFunctor> 
-	    MututalJRegSetMap_t;
 
 typedef std::unordered_map<std::string,CBPGraph> BPGraphMap_t;
+//Type to contain a label for a host-virus contig (chr and strand) pair
+typedef std::pair<std::string,std::string> StrandLabelPair_t;
+//Type to contain a vector of CBPGraphs (post decomposition)
+typedef std::vector<CBPGraph> BPGraphVec_t;
+//Type to contain a host-virus pair of Graph Vectors
+typedef std::pair<BPGraphVec_t,BPGraphVec_t> BPGraphVecPair_t;
+//Type to map host-virus contig labels to corresponding graph vector pairs
+typedef std::unordered_map<StrandLabelPair_t,BPGraphVecPair_t> BPGraphVecPairMap_t;
 
 //==== GLOBAL VARIABLE DECLARATIONS
 
@@ -115,7 +51,6 @@ bool FilterBPGraphs(BPGraphMap_t & graphMap);
 bool FilterAndClusterBPGraph(CBPGraph & graph);
 bool ProcessBPGraphs(BPGraphMap_t & graphMap);
 bool ProcessBPGraphs(size_t nThread, BPGraphMap_t & graphMap);
-void FilterRegions(jRegMap_t & regionMap);
 #ifndef NDEBUG
 void OutputDebugBPGraph(const BPGraphMap_t & graphMap,
                         std::string BPAdjFileName,
@@ -184,8 +119,8 @@ int main(int argc, char* argv[]) {
     ReadLength = parse_config(config_file_name).read_len;
     size_t nThread = parse_config(config_file_name).threads;
 
-    jRegLabelVector_t labelVec;
-    jRegLabelCount_t labelCount;
+//    jRegLabelVector_t labelVec;
+//    jRegLabelCount_t labelCount;
 
     igraph_setup();
     //BREAKPOINT GRAPH TO ID REGIONS
@@ -442,85 +377,6 @@ bool FilterBPGraphs(BPGraphMap_t & graphMap) {
     }
     fprintf(stderr,"Filtered Down to %lu graphs\n",graphMap.size());
     return (graphMap.size() > 0);
-}
-
-//Outputs regions which have enough reads assigned,
-//  enough is defined as the minimum reads
-//  minus the split bonus if any split reads are present
-//After this check, removes reads which now map to only host or only virus
-//This pair of filters is repeated until no filtering occurs
-//Then the final set of junctions is written
-//Inputs - a mapping of region labels to regions
-//	 - also uses global min reads and split bonus, and viral names
-//Output - None, modifes the regionMap
-void FilterRegions(jRegMap_t & regionMap){
-    //FUTURE:
-    //Current implementation does a lot of unecessary filtering
-    //One could map each qname to a region and vice versa so that the
-    //on each iteration only regions which may have changed are checked
-    //Cost - extra complexity and memory
-    bool bFilter;
-    size_t filterRound= 0;
-    do {
-	fprintf(stderr,"Filtering Regions - Round %lu ...\n",filterRound++);
-	bFilter=false;
-	//First Pass Remove regions with too few reads
-	//Containers tracking the number of host/viral regions a particular
-    	//qname is present in After the first filter pass
-    	std::unordered_map<std::string,size_t> hostCount;
-    	std::unordered_map<std::string,size_t> viralCount;
-    	for( auto it = regionMap.begin(); it != regionMap.end();){
-    	    const jRegLabel_t & label = it->first;
-    	    const junctionRegion_t & reg = it->second;
-    	    size_t effectiveReads = reg.QNameSet.size();
-    	    if(reg.nSplit) effectiveReads += SplitBonus;
-    	    if(effectiveReads < MinimumReads){ //Fails filter remove
-		bFilter=true;
-		it = regionMap.erase(it);
-    	    } else { // Keep the region
-		std::unordered_map<std::string,size_t> * pCountObj =
-		    (VirusNameSet.count(label.chr)) ? &viralCount : &hostCount;
-		//Increment the host/virus reg count for the qname
-		for(const std::string & qname : reg.QNameSet){
-		    if(!pCountObj->count(qname)){
-			(*pCountObj)[qname] = 0;
-		    }
-		    (*pCountObj)[qname]++;
-		}
-    	        it++;
-    	    }
-    	}
-	//If no regions were removed, second pass is unecessary
-	if(!bFilter && filterRound > 1) continue;
-	fprintf(stderr,"\tAfter 1st Pass: %lu Regions remain\n",regionMap.size());
-	//Second Pass - Remove qnames which now map to only host or 
-	//If no qnames get removed the next iteration won't remove any regions
-	bFilter=false; 
-	for( auto & pair : regionMap){
-	    for (   auto it = pair.second.QNameSet.begin();
-		    it != pair.second.QNameSet.end(); )
-	    {
-		//If the qname is associated with both a host and virus
-		//region, it may stay
-		if(hostCount[*it] && viralCount[*it]){
-		    it++;
-		} else { // erase the non-junction qname
-		    bFilter = true;
-		    //Update the split read count for the region if
-		    //necessary
-		    bool bSplit = ((*it)[it->length()-2] == '_');
-		    if(bSplit){
-			//The weird syntax is to prevent underflow in a
-			// case which shouldn't happen
-			pair.second.nSplit += (pair.second.nSplit) ? -1 : 0;
-		    }
-		    it = pair.second.QNameSet.erase(it);
-		}
-	    }
-	}
-    } while(bFilter);
-
-    fprintf(stderr,"Filtered Down to %lu Regions\n",regionMap.size());
 }
 
 
