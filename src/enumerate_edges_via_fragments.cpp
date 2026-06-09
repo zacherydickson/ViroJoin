@@ -75,7 +75,6 @@ BPGraphVecPairMap_t ConstructBPGraphVecPairMap(
 CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphMap);
 RegGraphVec_t ConstructRegionGraphVec(
         const BPGraphVecPairMap_t & graphVecPairMap);
-//CRegionGraph ConstructAndFilterRegionGraph(const BPGraphMap_t & graphMap);
 CRegionGraph ConstructAndFilterRegionGraph(
         const BPGraphVecPair_t & graphVecPair);
 //PairedRegGraphMap_t ConstructPairedRegionGraphMap(
@@ -91,6 +90,10 @@ bool FilterBPGraphs(BPGraphMap_t & graphMap);
 bool FilterBPGraphVec(BPGraphVec_t & graphVec);
 bool FilterBPGraphVecPairMap(BPGraphVecPairMap_t & graphVecPairMap);
 bool FilterAndClusterBPGraph(CBPGraph & graph);
+RegGraphVec_t FragmentMapToRegionGraphVec(const ChimericFragmentVecMap_t & fvMap);
+RegGraphVec_t FragmentMapToRegionGraphVec(size_t nThread, 
+                                    const ChimericFragmentVecMap_t & fvMap);
+CRegionGraph FragmentsToRegionGraph(const ChimericFragmentVec_t & fragVec);
 bool OperateOnBPGraphVecPairMap(BPGraphVecPairMap_t & graphVecPairMap,
                                 const std::string & operationName,
                                 std::function<bool(BPGraphVec_t &)> operation);
@@ -167,46 +170,24 @@ int main(int argc, char* argv[]) {
     ReadLength = parse_config(config_file_name).read_len;
     size_t nThread = parse_config(config_file_name).threads;
 
-//    jRegLabelVector_t labelVec;
-//    jRegLabelCount_t labelCount;
-
     igraph_setup();
 
-    //BREAKPOINT GRAPH TO IDENTIFY REGIONS
     ChimericFragmentVecMap_t fragVecMap = LoadFragments(candidate_file_name);
-    //bool bOnline = false;
-    //BPGraphMap_t graphMap = LoadBPGraphs(candidate_file_name,bOnline);
 
-
-    //TODO Implement parrallel processing
-
-    BPGraphVecPairMap_t graphVecPairMap = (nThread == 1) ?
-        ProcessFragments(fragVecMap) : //Single threaded
-        ProcessFragments(nThread,fragVecMap); //Multi-threaded
-//    if(nThread == 1){ //Single Threaded version - maybe avoid some overhead
-//        ProcessBPGraphs(graphMap);
-//        ProcessBPGraphs(graphMap);
-//    } else { //MultiThreaded Version
-//        ProcessBPGraphs(nThread,graphMap);
-//    }
-//#ifndef NDEBUG
-//    OutputDebugBPGraph(graphMap,BPAdjFileName,BPVertFileName);
-//#endif //NDEBUG
-    //REGION GRAPH TO ID EDGES
-    RegGraphVec_t regGraphVec =  ConstructRegionGraphVec(
-                                                graphVecPairMap );
+    RegGraphVec_t regGraphVec = (nThread == 1) ? 
+                                FragmentMapToRegionGraphVec(fragVecMap) :
+                                FragmentMapToRegionGraphVec(nThread, fragVecMap);
     fprintf(stderr,"Merging Paired Region Graphs ...\n");
     CRegionGraph regGraph = CRegionGraph::merge_graphs(regGraphVec);
-    regGraph.mergeUninformitiveOverlap();
     regGraph.ensureConstructed(); //Explicit Call 
+    regGraph.mergeUninformitiveOverlap();
+    regGraph.filterEdges(MinimumReads,SplitBonus);
     fprintf(stderr,
-            "After merging, The region graph contains %d edges between %d regions  ...\n",
+            "After merging and filtering, The region graph contains %d edges between %d regions  ...\n",
             regGraph.ecount(),regGraph.vcount());
-
-//#ifndef NDEBUG
-//    OutputDebugRegGraph(regGraph,RegAdjFileName,RegVertFileName);
-//#endif //NDEBUG
+    
     OutputResults(regGraph,regFileName,edgeFileName,assocFileName);
+    //TODO Fix the giant region bug
            
     fprintf(stderr,"Done - enumerate_edges\n");
 }
@@ -360,7 +341,7 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
         }
     }
     ////Explicitly request construction of edges
-    //regGraph.ensureConstructed();
+    regGraph.ensureConstructed();
     //fprintf(stderr, "Region graph with %d regions and %d edges created\n",regGraph.vcount(),regGraph.ecount());
     return regGraph;
 }
@@ -388,7 +369,7 @@ RegGraphVec_t ConstructRegionGraphVec(
     size_t regCounter = 0;
     size_t edgeCounter = 0;
     for(const auto & pair : graphVecPairMap) {
-        CRegionGraph regGraph  = ConstructAndFilterRegionGraph(pair.second);
+        CRegionGraph regGraph  = ConstructRegionGraph(pair.second);//ConstructAndFilterRegionGraph(pair.second);
         //Skip graphs with no edges
         if(regGraph.ecount() == 0) { continue; }
         regCounter += regGraph.vcount();
@@ -631,6 +612,71 @@ ChimericFragmentVecMap_t LoadFragments(const std::string & fname) {
     return fvMap;
 }
 
+//Single threaded implementation which processes from raw chimeic fragments 
+// through to a final merged region graph
+RegGraphVec_t FragmentMapToRegionGraphVec(const ChimericFragmentVecMap_t & fvMap) {
+     BPGraphVecPairMap_t graphVecPairMap =  ProcessFragments(fvMap);
+    //REGION GRAPH TO ID EDGES
+    return ConstructRegionGraphVec(graphVecPairMap);
+}
+
+
+//Multithreaded threaded implementation which processes from raw chimeic fragments 
+// through to a final merged region graph
+RegGraphVec_t FragmentMapToRegionGraphVec(size_t nThread, 
+                                    const ChimericFragmentVecMap_t & fvMap)
+{
+    fprintf(stderr,"Constructing Region Graphs from Fragments ...\n");
+    ctpl::thread_pool threadPool(nThread);
+    RegGraphVec_t regGraphVec;
+    std::vector<std::future<CRegionGraph>> futureVec;
+    for(const auto & pair : fvMap){
+        std::future<CRegionGraph> future = threadPool.push(
+                [&threadPool,&pair](int id) {
+                    return FragmentsToRegionGraph(pair.second);
+                } );
+        futureVec.push_back(std::move(future));
+    }
+    size_t ecount =0;
+    size_t vcount =0;
+    size_t counter = 0;
+    for(auto & future : futureVec){
+        CRegionGraph reg = future.get();
+        fprintf(stderr,"Completed at least %ld of %ld graphs%-10s\r",++counter,futureVec.size(),"");
+        if(reg.ecount()){
+            ecount += reg.ecount();
+            vcount += reg.vcount();
+            regGraphVec.push_back(std::move(reg));
+        }
+    }
+    fprintf(stderr,
+            "Constructed %ld disjoint graphs with %ld edges between %ld regions\n",
+            regGraphVec.size(), ecount, vcount );
+    return regGraphVec;
+}
+
+
+CRegionGraph FragmentsToRegionGraph(const ChimericFragmentVec_t & fragVec) {
+    BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(fragVec);
+    if(gvPair.first.empty()) { return CRegionGraph(); }
+    if( !DecomposeBPGraphVec(gvPair.first) ||
+        !DecomposeBPGraphVec(gvPair.second) )
+    {
+        return CRegionGraph();
+    }
+    if( !FilterBPGraphVec(gvPair.first) ||
+        !FilterBPGraphVec(gvPair.second) )
+    {
+        return CRegionGraph();
+    }
+    if( !ClusterBPGraphVec(gvPair.first) ||
+        !ClusterBPGraphVec(gvPair.second) )
+    {
+        return CRegionGraph();
+    }
+    return ConstructRegionGraph(gvPair);//ConstructAndFilterRegionGraph(gvPair);
+}
+
 bool OperateOnBPGraphVecPairMap(BPGraphVecPairMap_t & graphVecPairMap,
                                 const std::string & operationName,
                                 std::function<bool(BPGraphVec_t &)> operation)
@@ -813,12 +859,6 @@ BPGraphVecPairMap_t ProcessFragments(const ChimericFragmentVecMap_t & fvMap) {
         return graphVecPairMap;
     }
     return graphVecPairMap;
-}
-
-//Multi threaded version processing fragments into BPGraphs
-BPGraphVecPairMap_t ProcessFragments(size_t nThread, const ChimericFragmentVecMap_t & fvMap) {
-    BPGraphVecPairMap_t graphVecMap;
-    return graphVecMap;
 }
 
 //Takes a set of vertex properties defining a region, and constructs a bed formated string
