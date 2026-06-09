@@ -598,13 +598,15 @@ void CBPGraph::filterVertices( double minSupport, double splitBonus) {
 
 // Calculates the window boundaries based on direction (OpensLeft) and split status
 void CBPGraph::getWindow(int proxPos, bool isSplit, double& start, double& end) const {
+    int downstreamDist = isSplit ? readLen : maxInsertSize;
     if (!this->opens_left()) {
         // Upstream is numerically smaller (left), Downstream is numerically higher (right)
-        start = proxPos - upstreamDist;
-        end = proxPos + (isSplit ? readLen : maxInsertSize);
+        start = (proxPos >= upstreamDist) ? proxPos - upstreamDist : 0;
+        end = proxPos + downstreamDist;
     } else {
         // Upstream is numerically higher (right), Downstream is numerically smaller (left)
-        start = proxPos - (isSplit ? readLen : maxInsertSize);
+
+        start = (proxPos >= downstreamDist) ? (proxPos - downstreamDist) : 0;
         end = proxPos + upstreamDist;
     }
 }
