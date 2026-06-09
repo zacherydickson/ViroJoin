@@ -90,7 +90,7 @@ public:
                 int upsDist, int rLen, int maxInsert, int sFactor,
                 bool hasEdges, bool hasCliques);
     CBPGraph(igraph_t && graph, const CBPGraph & parent);
-    ~CBPGraph() { if(flag & OWNS_GRAPH) {igraph_destroy(&graph); } }
+    ~CBPGraph();
     // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
     CBPGraph(const CBPGraph&) = delete;
     CBPGraph& operator=(const CBPGraph&) = delete;
@@ -165,6 +165,14 @@ CBPGraph::CBPGraph(const std::string& chrom, bool opensLeftVal,
     // Set graph-level attributes
     SETGAS(&graph, "Chromosome", chrom.c_str());
     SETGAB(&graph, "OpensLeft", opensLeftVal);
+}
+
+//Destructor
+CBPGraph::~CBPGraph() {
+    if(flag & OWNS_GRAPH) {
+        igraph_destroy(&graph);
+        flag &= ~OWNS_GRAPH;
+    }
 }
 
 

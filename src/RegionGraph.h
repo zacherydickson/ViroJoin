@@ -119,11 +119,12 @@ protected:
     
 //Con-/Destruction
 public:
-    CRegionGraph();
-    ~CRegionGraph() { if(flag & OWNS_GRAPH) {igraph_destroy(&graph); } }
+    CRegionGraph(size_t nVertices = 0);
+    ~CRegionGraph();
     // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
     CRegionGraph(const CRegionGraph&) = delete;
     CRegionGraph& operator=(const CRegionGraph&) = delete;
+    // Move semantics
     CRegionGraph(CRegionGraph&& other);
     CRegionGraph& operator=(CRegionGraph&& other);
 //Accessors
@@ -157,15 +158,24 @@ private:
 //DEFINITIONS
 
 //Constructor
-CRegionGraph::CRegionGraph() : flag(OWNS_GRAPH | VALID_LOOKUP) {
+CRegionGraph::CRegionGraph(size_t nVerticies) :
+    flag(OWNS_GRAPH | VALID_LOOKUP)
+{
     init_attribute_table();
     // Initialize an undirected graph
-    if (igraph_empty(&graph, 0, IGRAPH_UNDIRECTED) != IGRAPH_SUCCESS) {
+    if (igraph_empty(&graph, nVerticies, IGRAPH_UNDIRECTED) != IGRAPH_SUCCESS) {
         throw std::runtime_error("Failed to initialize igraph object.");
     }
     // Set graph-level attributes
     // There aren't any
 }
+
+CRegionGraph::~CRegionGraph () {
+     if(flag & OWNS_GRAPH) {
+         igraph_destroy(&graph);
+         flag &= ~OWNS_GRAPH;
+     }
+ }
 
 //Move Constructor
 CRegionGraph::CRegionGraph(CRegionGraph&& other) :
@@ -568,13 +578,10 @@ CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphV
                 adjVec.push_back(i + totalVertices);
                 adjVec.push_back(n + totalVertices);
                 //Get the edge info for the edge between node i and n
-                igraph_vector_int_t eids;
-                igraph_get_all_eids_between(&(graphObj.graph),&eids,i,n,
-                                            IGRAPH_UNDIRECTED);
                 //Assumes there is only one edge between any given pair of nodes
                 igraph_int_t eid;
                 igraph_get_eid(&(graphObj.graph),&eid,i,n,IGRAPH_UNDIRECTED,false);
-                if(eid == -1) {continue; }
+                if(eid == -1) { continue; }
                 igraph_int_t mergedEid = ePropVec.size();
                 ePropVec.push_back(graphObj.get_edge_properties(eid));
                 ePropVec.back().id = mergedEid;
@@ -584,7 +591,6 @@ CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphV
         //Cleanup
         igraph_adjlist_destroy(&adjList);
     }
-
     //Construct a combined igraph_adjlist_t object
     //igraph_adjlist_t merged_adjlist;
     //igraph_adjlist_init_empty(&merged_adjlist,totalVertices);
@@ -595,12 +601,12 @@ CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphV
     //    }
     //}
     //Create an igraph_vector_int_t object
-    igraph_vector_int_t edges = igraph_vector_int_view(adjVec.data(),adjVec.size());
-    //Construct the merged graph
-    CRegionGraph mergedRegGraph;
+    const igraph_vector_int_t edges = igraph_vector_int_view(adjVec.data(),adjVec.size());
+    //Construct the merged graph with th required number of vertices
+    CRegionGraph mergedRegGraph(totalVertices);
     mergedRegGraph.flag &= ~VALID_LOOKUP;
     igraph_t & mergedGraph = mergedRegGraph.graph;
-    igraph_empty(&mergedGraph,totalVertices,IGRAPH_UNDIRECTED);
+    //igraph_empty(&mergedGraph,totalVertices,IGRAPH_UNDIRECTED);
     igraph_add_edges(&mergedGraph, &edges, nullptr);
     //Update the vertex information of the merged graph
     for(const VertexProps & vProp : vPropVec){
@@ -615,7 +621,6 @@ CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphV
         SETVAN(&mergedGraph, "Right", vProp.id, vProp.right);
         SETVAS(&mergedGraph, "assocFragGrps", vProp.id, assocFragStr.c_str());
     }
-
     //Update the edge information of the merged graph
     for(const EdgeProps & eProp  : ePropVec){
         std::string assocFrag = strjoin(eProp.assocFragGroups.begin(),
