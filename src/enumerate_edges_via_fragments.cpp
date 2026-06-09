@@ -119,9 +119,8 @@ std::string                 to_bed(CRegionGraph::VertexProps);
 //          fragmentName, edgeID , fragmentGrpInEdgeID
 int main(int argc, char* argv[]) {
     //#Parse Inputs
-    std::string virus_ref_fname = argv[1];
-    std::string workdir = argv[2];
-    std::string workspace = argv[3];
+    std::string workdir = argv[1];
+    std::string workspace = argv[2];
 
     //## Files to be used from the workdir
     std::string stats_file_name = workspace + "/stats.txt";
