@@ -90,6 +90,9 @@ class ChimericFragment_t {
     std::array<size_t,2> proximal_pos() const {
         return {this->proximal_pos(IV1),this->proximal_pos(IV2)};
     }
+    size_t length(IV_IDX ivIdx) const {
+        return (flag[ivIdx] & HAS_INTERVAL) ? end[ivIdx] - off[ivIdx] : 0;
+    }
     //Mutators
     protected:
     static void set_bit(uint16_t & flag, INFOFLAGBIT bit) {

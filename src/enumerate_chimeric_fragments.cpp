@@ -162,8 +162,10 @@ void LogMateAlnInfoList(const MateAlnInfoList_t  & list) {
         fprintf(stderr,"%s\n",aln.to_string().c_str());
     }
 }
+//GLOBAL VARIABLES
 
 std::unordered_set<std::string> VirusNameSet;
+size_t MaxInsertSize;
 
 //===== Function Declarations
 
@@ -214,6 +216,7 @@ int main(int argc, char* argv[]) {
 
     //##Files to be used from the workspace
     std::string bam_fname = workspace + "/all_alignments.ns.bam";
+    std::string stats_file_name = workspace + "/stats.txt";
 
     //##Output file
     std::string bed_fname = workdir + "/junction-candidates.bedpe";
@@ -227,7 +230,7 @@ int main(int argc, char* argv[]) {
     //##LOAD DATA INTO GLOBAL VARIABLES
     //Load names of viral contigs
     LoadVirusNames(virus_names_file,VirusNameSet);
-
+    MaxInsertSize = parse_stats(stats_file_name).max_is;
 
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
@@ -521,6 +524,12 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
             ChimericFragment_t frag(parentFrag);
             //Skip fragments where R2 alignments are inconsistent
             if(!AddMateAlignmentInfoToFragment(r2,frag)) { continue; }
+            //Skip fragments which are too large
+            if( frag.length(ChimericFragment_t::IV1) +
+                frag.length(ChimericFragment_t::IV2) > MaxInsertSize)
+            {
+                continue;
+            }
             fragmentVec.push_back(frag);
         }
     }
