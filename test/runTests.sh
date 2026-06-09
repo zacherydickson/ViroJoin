@@ -9,7 +9,8 @@ TestDirBase="testfiles"
 
 IsolateKmerLen=18;
 MinClipLen=20;
-
+MinReads=4;
+SplitBonus=1;
 
 function main {
     if [ "$#" -lt 2 ]; then
@@ -52,6 +53,11 @@ function main {
         ((nTests++));
         RunTest "enumerate_chimeras" "$readInfoFile" "$workingDir" || ((bFail++));
     fi
+    if [[ $bAll == 1 || -n "${testSet["enumerate_edges"]}" ]]; then
+        ((nTests++));
+        RunTest "enumerate_edges" "$readInfoFile" "$workingDir" || ((bFail++));
+    fi
+
     if [ "$nTests" == 0 ]; then
         >&2 echo -e "[${YELLOW}WARNING${NC}] No implemented tests requested";
     fi
@@ -179,6 +185,104 @@ function test_enumerate_chimeras {
 
     ' "$resFile" "$mapReadsFile" "$infoFile"
 }
+
+function test_enumerate_edges {
+    infoFile=$1; shift
+    workDir=$1; shift
+    testDir=$1; shift
+    jcFile="$workDir/junction-candidates.bedpe"
+    rcFile="$workDir/region-candidates.bed"
+    ecFile="$workDir/edge-candidates.tab"
+    feFile="$workDir/fragment-edge-associations.tab"
+    log="$testDir/enumerate_edges.log"
+    awk -v MinReads="$MinReads" -v SplitBonus="$SplitBonus" -v lf="$log" '
+        function failure(msg) {
+            print msg ", see", lf
+            print msg > lf
+            print FNR ": " $0 > lf
+            exit 1;
+        }
+        function warning(msg) {
+            if(!bWarned){
+                print " Warning - " msg ", see", lf
+                bWarned=1;
+            }
+            print msg > lf
+            print FNR ": " $0 > lf
+        }
+        function testFragRegionAssoc(fid,hv,rid,    i,pass) {
+            pass=0;
+            warn=0;
+            for(i = 0; i < FragJCCount[fid] && !pass; i++) {
+                if(JCInfo[fid,i,hv"C"] != RCInfo[rid,"C"]) { continue; }
+                if(JCInfo[fid,i,hv"OL"] != RCInfo[rid,"OL"]) { continue; }
+                if(JCInfo[fid,i,hv"L"] < RCInfo[rid,"L"]) {
+                    if(JCInfo[fid,i,hv"R"] < RCInfo[rid,"L"]) {continue;}
+                    warn = JCInfo[fid,i,hv"L"] - RCInfo[rid,"L"]; 
+                }
+                if(JCInfo[fid,i,hv"R"] > RCInfo[rid,"R"]) { continue; }
+                pass = 1;
+            }
+            if(!pass){ failure("Unsupported Frag-"hv"-Region Assoc"); }
+            if(warn){ warning("Premature Left " warn); }
+        }
+        (ARGIND == 1){ #Junction-Candidates
+            fid=$7
+            i=FragJCCount[fid]++;
+            JCInfo[fid,i,"HC"] = $1;
+            JCInfo[fid,i,"HL"] = $2;
+            JCInfo[fid,i,"HR"] = $3;
+            JCInfo[fid,i,"HOL"] = and($8,0x100) ? 1 : 0;
+            JCInfo[fid,i,"VC"] = $4;
+            JCInfo[fid,i,"VL"] = $5;
+            JCInfo[fid,i,"VR"] = $6;
+            JCInfo[fid,i,"VOL"] = and($8,0x1) ? 1 : 0;
+            next
+        }
+        (ARGIND == 2){ #Region-Candidates
+            rid=$4
+            RCSet[rid] = 1;
+            RCInfo[rid,"C"] = $1; 
+            RCInfo[rid,"L"] = $2; 
+            RCInfo[rid,"R"] = $3; 
+            RCInfo[rid,"IH"] = and($5,0x80) ? 1 : 0; 
+            RCInfo[rid,"OL"] = and($5,0x1) ? 1 : 0; 
+            next
+        }
+        (ARGIND == 3){ #Edge-Candidates
+            eid=$1; hRid=$2; vRid=$3; n = $4;
+            ECSet[eid] = 1
+            if(!RCSet[hRid]) { failure("Unknown Host region"); }
+            if(!RCSet[vRid]) { failure("Unknown Virus region"); }
+            ECInfo[eid,"HID"] = hRid
+            ECInfo[eid,"VID"] = vRid
+            ECInfo[eid,"N"] = n
+            if(n < MinReads - SplitBonus) { failure("Under supported edge"); }
+            next
+        }
+        (ARGIND == 4){ #Fragment-Edge Assoc
+            #Test if there is this association makes sense
+            fid=$1;
+            if(!FragJCCount[fid]) { failure("Unknown Fragment"); }
+            eid=$2;
+            fgid=$3;
+            if(!ECSet[eid]) { failure("Unknown Edge"); }
+            hRid = ECInfo[eid,"HID"];
+            vRid = ECInfo[eid,"VID"];
+            testFragRegionAssoc(fid,"H",hRid);
+            testFragRegionAssoc(fid,"V",vRid);
+            if(!Seen[eid,fgid]) {ECInfo[eid,"n"]++;Seen[eid,fgid]++}
+        } 
+        END {
+            for(eid in ECSet){
+                if(ECInfo[eid,"n"] < ECInfo[eid,"N"]){
+                    failure( "Edge support mismatch for " eid);
+                }
+            }
+        }
+    ' "$jcFile" "$rcFile" "$ecFile" "$feFile"
+}
+
 
 #Ensure that the mapped reads are properly paired,
 #   there are no duplicate read ids, and
