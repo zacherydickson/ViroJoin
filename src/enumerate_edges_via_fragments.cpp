@@ -246,7 +246,7 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
     {
         std::string chr = vec_ptr->front().get_chromosome();
         bool opensLeft = vec_ptr->front().opens_left();
-        bool isHost = (vec_ptr == &graphVecPair.second);
+        bool isHost = (vec_ptr == &graphVecPair.first);
         for(const CBPGraph & graph : *vec_ptr){
             std::map<size_t,CRegionGraph::VertexProps> regionPropMap;
             //Construct the Regions from the cliques in the graph
@@ -564,6 +564,7 @@ std::string to_bed(CRegionGraph::VertexProps props) {
     uint16_t flag = (ChimericFragment_t::HAS_INTERVAL);
     flag |= (props.opensLeft) ? ChimericFragment_t::OPENS_LEFT : 0;
     flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
+    if(props.isHost){ flag |= (1 << ChimericFragment_t::FLAG_BITS); };
 //    flag |= (props.fromSplit) ? ChimericFragment_t::IS_SPLIT : 0;
     bed += '\t' + std::to_string(int(flag));
     bed += '\t' + std::string((props.opensLeft == props.isHost) ? "-" : "+");
