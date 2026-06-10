@@ -30,7 +30,7 @@ struct JunctionInterval_t {
 
 //CBranchedQueue defined in BranchedQueue.hpp
 
-using CBranchedEdgeQueue = CBranchedQueue<Edge_t,Read_pt,ReadSet_t,AlignmentMap_t>;
+
 
 //==== GLOBAL VARIABLE DECLARATIONS
 
@@ -39,7 +39,7 @@ config_t Config;
 stats_t Stats;
 bam_hdr_t* JointHeader;
 //For an alignment to pass it must have a score of at least 30
-StripedSmithWaterman::Filter AlnFilter(true,true,30,32767);
+StripedSmithWaterman::Filter AlnFilter;//(true,true,30,32767);
 StripedSmithWaterman::Aligner Aligner(1,4,6,1,false);
 int32_t AlnMaskLen;
 bool ExploratoryDedupliction = false;
@@ -448,10 +448,10 @@ call_t ConstructCall(        int id, const Edge_t & edge,
         SQPair_t vPair(edge.virusRegion,read);
         const StripedSmithWaterman::Alignment & hAln = alnMap.at(hPair);
         const StripedSmithWaterman::Alignment & vAln = alnMap.at(vPair);
-        if(size_t(hAln.ref_begin) < hostLeft) hostLeft = hAln.ref_begin;
-        if(size_t(vAln.ref_begin) < virusLeft) virusLeft = vAln.ref_begin;
-        if(size_t(hAln.ref_end) > hostRight) hostRight = hAln.ref_end;
-        if(size_t(vAln.ref_end) > virusRight) virusRight = vAln.ref_end;
+        if(hAln.ref_begin < hostLeft) hostLeft = hAln.ref_begin;
+        if(vAln.ref_begin < virusLeft) virusLeft = vAln.ref_begin;
+        if(hAln.ref_end > hostRight) hostRight = hAln.ref_end;
+        if(vAln.ref_end > virusRight) virusRight = vAln.ref_end;
         double hLen = hAln.query_end - hAln.query_begin + 1;
         double vLen = vAln.query_end - vAln.query_begin + 1;
         hostPBS += double(hAln.sw_score) / hLen;
@@ -614,8 +614,8 @@ void DeduplicateEdge(Edge_t & edge,const AlignmentMap_t & alnMap) {
         //Need a modified cigar string
         std::vector<uint32_t> modCigarVec = ConstructJointModCigar(
                                             hAln,vAln,
-                                            size_t(hAln.ref_begin) != hJIV.distal,
-                                            size_t(vAln.ref_begin) != vJIV.proximal);
+                                            hAln.ref_begin != hJIV.distal,
+                                            vAln.ref_begin != vJIV.proximal);
         //Both eliminated, so its either host side or virus side
         if(bSeenHuman || bSeenVirus){ // At least one end matches
             bool bPass = true;
@@ -674,7 +674,7 @@ size_t FillStringFromAlignment( std::string & outseq,
     size_t qpos = 0;
     size_t nFill = 0;
     //Iterate over cigar operations and set characters in the outseq
-    for(size_t i = 0; i < cigarVec.size(); i++){
+    for(int i = 0; i < cigarVec.size(); i++){
         size_t opLen = bam_cigar_oplen(cigarVec[i]);
         char opchr = bam_cigar_opchr(cigarVec[i]);
         switch (opchr) {
@@ -686,8 +686,8 @@ size_t FillStringFromAlignment( std::string & outseq,
             case '=':
             case 'X':
             case 'I': //Insertions taken as is
-                for(size_t j = 0;
-                    j < opLen && pos < maxpos && qpos < inseq.size();
+                for(int j = 0;
+                    j < opLen & pos < maxpos & qpos < inseq.size();
                     j++)
                 {
                     outseq[pos++] = inseq[qpos++];
@@ -695,8 +695,8 @@ size_t FillStringFromAlignment( std::string & outseq,
                 }
                 break;
             case 'D':
-                for(size_t j = 0;
-                    j < opLen && pos < maxpos && qpos < inseq.size();
+                for(int j = 0;
+                    j < opLen & pos < maxpos & qpos < inseq.size();
                     j++)
                 {
                     outseq[pos++] = '-';
@@ -754,7 +754,7 @@ void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
                             (edge.virusOffset - vJIV.distal) :
                             (vJIV.distal - edge.virusOffset));
         size_t is = hIS + vIS;
-        if(is > size_t(Stats.max_is)){ // Insert size is too high
+        if(is > Stats.max_is){ // Insert size is too high
             toRemoveVec.push_back(read);
         }
     }
@@ -806,14 +806,14 @@ void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
             //At this point breakpoints were defined by alignments
             // :: no alignment to virus will start before the breakpoint
             // :: no alignment to host will end after the breakpoint
-            uint32_t sMiss = (offset > size_t(aln.ref_begin)) ?
+            uint32_t sMiss = (offset > aln.ref_begin) ?
                                offset - aln.ref_begin : aln.ref_begin - offset;
-            uint32_t eMiss = (offset > size_t(aln.ref_end)) ?
+            uint32_t eMiss = (offset > aln.ref_end) ?
                                offset - aln.ref_end : aln.ref_end - offset;
             uint32_t miss = ((*reg_p)->isVirus) ? sMiss : eMiss;
             //If the read is clipped enough, but starts/ends too far
             //from the breakpoint it is wrongly clipped
-            if(clipLen > size_t(Config.max_sc_dist) && miss > size_t(Config.max_sc_dist)){
+            if(clipLen > Config.max_sc_dist && miss > Config.max_sc_dist){
                 toRemoveVec.push_back(read);
                 continue;
             }
@@ -948,10 +948,10 @@ void IdentifyEdgeBreakpoints(Edge_t & edge, const AlignmentMap_t & alnMap){
         SQPair_t vPair(edge.virusRegion,read);
         const StripedSmithWaterman::Alignment & hAln = alnMap.at(hPair);
         const StripedSmithWaterman::Alignment & vAln = alnMap.at(vPair);
-        if(size_t(hAln.ref_end) > hostIV.proximal) hostIV.proximal = hAln.ref_end;
-        if(size_t(hAln.ref_begin) < hostIV.distal) hostIV.distal = hAln.ref_begin;
-        if(size_t(vAln.ref_begin) < virusIV.proximal) virusIV.proximal = vAln.ref_begin;
-        if(size_t(vAln.ref_end) > virusIV.distal) virusIV.distal = vAln.ref_end;
+        if(hAln.ref_end > hostIV.proximal) hostIV.proximal = hAln.ref_end;
+        if(hAln.ref_begin < hostIV.distal) hostIV.distal = hAln.ref_begin;
+        if(vAln.ref_begin < virusIV.proximal) virusIV.proximal = vAln.ref_begin;
+        if(vAln.ref_end > virusIV.distal) virusIV.distal = vAln.ref_end;
     }
     edge.hostOffset = hostIV.proximal;
     edge.virusOffset = virusIV.proximal;
