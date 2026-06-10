@@ -87,9 +87,11 @@ bool                        OperateOnBPGraphVecPairMap(
                                 std::function<bool(BPGraphVec_t &)> operation);
 BPGraphVecPairMap_t         ProcessFragments(const ChimericFragmentVecMap_t & fvMap);
 void                        OutputResults( const CRegionGraph & regGraph,
+                                           const ChimericFragmentVecMap_t fragVecMap,
                                            const std::string & regFileName,
                                            const std::string & edgeFileName,
-                                           const std::string & assocFileName);
+                                           const std::string & assocFileName,
+                                           const std::string & regAssocFileName);
 std::string                 to_bed(CRegionGraph::VertexProps);
 
 //==== MAIN
@@ -104,11 +106,22 @@ std::string                 to_bed(CRegionGraph::VertexProps);
 //  viral regions which have fragments associated with both
 // The edges are filtered for minimum support
 // Regions with edges are output to a bed file, with the regionID as the name field
+//  The score field is a decimal flag:
+//      0x1	1	Set if the region opens left
+//      0x2	2	Set if the region was supported by split reads
+//      0x4	4	Always Set
+//      0x80	128	Set if the region is a host region
 // Edges are output to a tab delim file:
-//  fragmentName, regionIDHost, regionIDVirus, edgeID, grpIDList
-//  each regIDHost- regionIDVirus combo is associted with one edgeID
+//  edgeID, regionIDHost, regionIDVirus,Support
+// Fragment-edge associations are output to a tab delim file:
+//  fragment name, edgeID, grpID 
 //  a given fragment may occur in multiple fragment groups associated with an edge
 //  the amount of support for an edge is then the number of unique grpIDs associated with that edgeID
+// Read-region associations are output to a tab delim file:
+//  readName, regionID, flag
+//  Flag is a decimal flag: (Like BAM flag)
+//  0x40    64  READ1
+//  0x80    128 READ2
 //Inputs - the virus ref name (to differentiate host and viral references)
 //       - the workspace (to find the stats file)
 //       - the working dir (for output and to find the config and junction candidates)
@@ -130,6 +143,7 @@ int main(int argc, char* argv[]) {
     std::string regFileName = workdir + "/region-candidates.bed";
     std::string edgeFileName = workdir + "/edge-candidates.tab";
     std::string assocFileName = workdir + "/fragment-edge-associations.tab";
+    std::string regAssocFileName = workdir + "/read-region-associations.tab";
 
     //Load global variables
     MaxInsertSize = parse_stats(stats_file_name).max_is;
@@ -155,8 +169,14 @@ int main(int argc, char* argv[]) {
     fprintf(stderr,
             "After merging and filtering, The region graph contains %d edges between %d regions  ...\n",
             regGraph.ecount(),regGraph.vcount());
-    
-    OutputResults(regGraph,regFileName,edgeFileName,assocFileName);
+
+    //TODO: Output a mapping between READS and Regions
+    //  The original fragments know whether their host and viral intervals
+    //  come from Read1, Read2, or both so if an edge associates two regions
+    //  we can know if which of R1 and R2 are associated with the host region
+    //  and the viral region (Output as a fragment name, regionID, (isR1 << 6, isR2 << 7)
+    OutputResults(  regGraph, fragVecMap,
+                    regFileName,edgeFileName,assocFileName,regAssocFileName);
            
     fprintf(stderr,"Done - enumerate_edges\n");
 }
@@ -490,9 +510,11 @@ bool OperateOnBPGraphVecPairMap(BPGraphVecPairMap_t & graphVecPairMap,
 }
 
 void OutputResults( const CRegionGraph & regGraph,
+                    const ChimericFragmentVecMap_t fragVecMap,
                     const std::string & regFileName,
                     const std::string & edgeFileName,
-                    const std::string & assocFileName)
+                    const std::string & assocFileName,
+                    const std::string & regAssocFileName)
 {
     fprintf(stderr,"Outputting Results ... \n");
         // Open output stream 
