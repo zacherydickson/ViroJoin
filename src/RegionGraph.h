@@ -449,7 +449,8 @@ CRegionGraph::EdgeProps CRegionGraph::get_edge_properties(int id) const {
     return {    id,
                 EAN(&graph,"weight",id),
                 EAB(&graph,"FromSplit",id),
-                strsplit(EAS(&graph,"assocFragGrps",id),FragDelim)
+                strsplit(EAS(&graph,"assocFragGrps",id),FragDelim),
+                this->get_edge_endpoints(id)
     };
 }
 
