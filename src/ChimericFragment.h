@@ -77,8 +77,12 @@ class ChimericFragment_t {
     std::array<size_t,2> distal_pos() const {
         return {this->distal_pos(IV1),this->distal_pos(IV2)};
     }
+    bool fromR1(IV_IDX ivIdx) const { return flag[ivIdx] & FROM_R1; }
+    bool fromR2(IV_IDX ivIdx) const { return flag[ivIdx] & FROM_R2; }
+    size_t getEnd(IV_IDX ivIdx) const { return end[ivIdx]; }
     const std::string & getName() const { return name; }
     const std::string & getChr(IV_IDX ivIdx) const { return chr[ivIdx]; }
+    size_t getOffset(IV_IDX ivIdx) const { return off[ivIdx]; }
     bool opens_left(IV_IDX ivIdx) const { return flag[ivIdx] & OPENS_LEFT; }
     bool is_chimeric() const { return this->both(HAS_INTERVAL); }
     bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
