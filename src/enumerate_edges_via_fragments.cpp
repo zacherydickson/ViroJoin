@@ -12,9 +12,22 @@
 #include "igraph/igraph.h"
 #include "config.h"
 #include "utils.h"
+#include "htslib/sam.h"
 
 //==== TYPE DECLARATIONS
 
+struct ReadRegionAssoc_t {
+    std::string readName;
+    uint16_t flag;
+    igraph_int_t regionId;
+    std::string to_string() const {
+        return  readName + "\t" + std::to_string(regionId) + "\t" +
+                std::to_string(int(flag));
+    }
+
+};
+
+typedef std::vector<ReadRegionAssoc_t> ReadRegionAssocVec_t;
 
 //Type to contain a label for a host-virus contig (chr and strand) pair
 typedef std::pair<std::string,std::string> StrandLabelPair_t;
@@ -37,6 +50,10 @@ typedef std::vector<ChimericFragment_t> ChimericFragmentVec_t;
 typedef std::unordered_map< StrandLabelPair_t, ChimericFragmentVec_t,
                             StrandLabelPair_HashFunctor,
                             StrandLabelPair_EqualFunctor> ChimericFragmentVecMap_t;
+
+//Type for looking up all fragments by name
+typedef std::unordered_map<std::string,std::vector<const ChimericFragment_t*>>
+        ChimericFragmentIndex_t;
 
 //Type to contain a vector of CBPGraphs (post decomposition)
 typedef std::vector<CBPGraph> BPGraphVec_t;
@@ -61,11 +78,18 @@ int             UpstreamSize = 5;
 //==== FUNCTION DECLARATIONS
 
 //Retval                    Function Name
+bool                        ChimericFragmentOverlapsRegion(
+                                const ChimericFragment_t & frag,
+                                ChimericFragment_t::IV_IDX ivIdx,
+                                const CRegionGraph::VertexProps & regProp);
 bool                        ClusterBPGraph(CBPGraph & graph);
 BPGraphVecPair_t            ConstructBPGraphVecPair(
                                 const ChimericFragmentVec_t & fragVec);
 BPGraphVecPairMap_t         ConstructBPGraphVecPairMap(
                                 const ChimericFragmentVecMap_t & fvMap );
+ReadRegionAssocVec_t        ConstructReadRegionAssociations(
+                                const CRegionGraph & regGraph,
+                                const ChimericFragmentIndex_t & cfIndex);
 CRegionGraph                ConstructRegionGraph(
                                 const BPGraphVecPair_t & graphMap);
 RegGraphVec_t               ConstructRegionGraphVec(
@@ -80,18 +104,21 @@ RegGraphVec_t               FragmentMapToRegionGraphVec(size_t nThread,
                                 const ChimericFragmentVecMap_t & fvMap);
 CRegionGraph                FragmentsToRegionGraph(
                                 const ChimericFragmentVec_t & fragVec);
+ChimericFragmentIndex_t     IndexChimericFragments(
+                                const ChimericFragmentVecMap_t & fvMap);
 ChimericFragmentVecMap_t    LoadFragments(const std::string & fname);
 bool                        OperateOnBPGraphVecPairMap(
                                 BPGraphVecPairMap_t & graphVecPairMap,
                                 const std::string & operationName,
                                 std::function<bool(BPGraphVec_t &)> operation);
 BPGraphVecPairMap_t         ProcessFragments(const ChimericFragmentVecMap_t & fvMap);
-void                        OutputResults( const CRegionGraph & regGraph,
-                                           const ChimericFragmentVecMap_t fragVecMap,
-                                           const std::string & regFileName,
-                                           const std::string & edgeFileName,
-                                           const std::string & assocFileName,
-                                           const std::string & regAssocFileName);
+void                        OutputResults(
+                                const CRegionGraph & regGraph,
+                                const ReadRegionAssocVec_t & rrAssocVec,
+                                const std::string & regFileName,
+                                const std::string & edgeFileName,
+                                const std::string & assocFileName,
+                                const std::string & regAssocFileName);
 std::string                 to_bed(CRegionGraph::VertexProps);
 
 //==== MAIN
@@ -170,18 +197,28 @@ int main(int argc, char* argv[]) {
             "After merging and filtering, The region graph contains %d edges between %d regions  ...\n",
             regGraph.ecount(),regGraph.vcount());
 
-    //TODO: Output a mapping between READS and Regions
-    //  The original fragments know whether their host and viral intervals
-    //  come from Read1, Read2, or both so if an edge associates two regions
-    //  we can know if which of R1 and R2 are associated with the host region
-    //  and the viral region (Output as a fragment name, regionID, (isR1 << 6, isR2 << 7)
-    OutputResults(  regGraph, fragVecMap,
+    OutputResults(  regGraph, ConstructReadRegionAssociations(regGraph,
+                                IndexChimericFragments(fragVecMap) ),
                     regFileName,edgeFileName,assocFileName,regAssocFileName);
            
     fprintf(stderr,"Done - enumerate_edges\n");
 }
 
 //==== FUNCTION DEFINITIONS
+
+//Given a chimeric fragment, an interval to look at, and a region
+// tests if the corresponding interval and the region overlap
+//Output - true if overlapping, false otherwise
+bool ChimericFragmentOverlapsRegion(const ChimericFragment_t & frag,
+                                    ChimericFragment_t::IV_IDX ivIdx,
+                                    const CRegionGraph::VertexProps & regProp)
+{
+    if(frag.getChr(ivIdx) != regProp.chromosome) { return false; }
+    if(frag.opens_left(ivIdx) != regProp.opensLeft) { return false; }
+    size_t minRight = std::min(frag.getEnd(ivIdx),regProp.right);
+    size_t maxLeft = std::max(frag.getOffset(ivIdx),regProp.left);
+    return (minRight >= maxLeft);
+}
 
 //Identifies all maximal cliques within a graph
 //Inputs    - a graph to filter
@@ -254,6 +291,79 @@ BPGraphVecPairMap_t ConstructBPGraphVecPairMap(
     }
     fprintf(stderr, "Constructed %lu Breakpoint Graph Pairs\n",gvPairMap.size());
     return gvPairMap;
+}
+
+//Given a Region graph with edges which associate chimeric fragment names between regions
+//  and an index of all chimeric fragments with the same name, uses the FROM_R1 and FROM_R2
+//  bits in the Chimeric fragment index to assocociate particular reads with with 
+//  particular regions
+//Inputs - a regionGraph with edges with host and viral endpoints
+//       - a mapping from fragment names to chimeric fragment object pointers
+//Output - a vector or ReadRegionAssoc Options 
+ReadRegionAssocVec_t ConstructReadRegionAssociations(
+                        const CRegionGraph & regGraph,
+                        const ChimericFragmentIndex_t & cfIndex)
+{
+    
+    std::vector<ReadRegionAssoc_t> rrAssocVec;
+    std::unordered_set<std::string> seenRR;
+    for(int eid = 0; eid < regGraph.ecount();eid++){
+        CRegionGraph::EdgeProps prop = regGraph.get_edge_properties(eid);
+        std::unordered_set<std::string> seenFrags;
+        for(const std::string & fragGroup : prop.assocFragGroups){
+            for(const std::string & fName : 
+                    strsplit(fragGroup,CRegionGraph::DupDelim))
+            {
+                //Skip fragments already processed for this edge
+                if(!seenFrags.insert(fName).second) { continue; }
+                if(!cfIndex.count(fName)){
+                    throw std::runtime_error(
+                            "Encountered an fragment Name " + fName +
+                            " in the region graph not in the junction candidates");
+                }
+                //Cache for region properties
+                std::unordered_map<igraph_int_t,CRegionGraph::VertexProps>
+                    vPropMap;
+                for(igraph_int_t rid : {    prop.endpoints.first,
+                                            prop.endpoints.second } )
+                {
+                    if(!vPropMap.count(rid)){
+                        vPropMap[rid] = regGraph.get_vertex_properties(rid);
+                    }
+                    ChimericFragment_t::IV_IDX ivIdx =
+                        (rid == prop.endpoints.first) ?
+                            ChimericFragment_t::IV1 : ChimericFragment_t::IV2;
+                    //Skip read region associations already observed
+                    if(!seenRR.insert(fName + std::to_string(rid)).second) {
+                        continue;
+                    }
+                    ReadRegionAssoc_t rrAssoc = {fName,0,rid};
+                    //Iterate over fragments with this name and find which (if any) overlap this region
+                    for(const ChimericFragment_t * fragPtr : cfIndex.at(fName)){
+                        if(ChimericFragmentOverlapsRegion(  *fragPtr,ivIdx,
+                                                            vPropMap[rid]) )
+                        {
+                            if(fragPtr->fromR1(ivIdx)) {
+                                rrAssoc.flag |= BAM_FREAD1;
+                            }
+                            if(fragPtr->fromR2(ivIdx)) {
+                                rrAssoc.flag |= BAM_FREAD2;
+                            }
+                        }
+                    }
+                    if(rrAssoc.flag == 0){
+                        throw std::runtime_error(
+                                "Encountered a region (" +
+                                vPropMap[rid].to_string() +
+                                ") associated non-overlapping junction candidates (" +
+                                fName + ")");
+                    }
+                    rrAssocVec.push_back(rrAssoc);
+                }
+            }
+        }
+    }
+    return rrAssocVec;
 }
 
 //Takes the cliques generated in the graph map and builds regions from them
@@ -371,6 +481,22 @@ bool FilterBPGraphVec(BPGraphVec_t & graphVec) {
     return !graphVec.empty();
 }
 
+
+ChimericFragmentIndex_t IndexChimericFragments(
+                                const ChimericFragmentVecMap_t & fvMap)
+{
+    ChimericFragmentIndex_t fragVecByNameMap;
+    for(const auto & pair : fvMap){
+        //const StrandLabelPair_t & label = pair.first;
+        const ChimericFragmentVec_t & fv = pair.second;
+        for(const ChimericFragment_t & frag : fv){
+            const std::string & fName = frag.getName();
+            fragVecByNameMap[fName].push_back(&frag);
+        }
+    }
+    return fragVecByNameMap;
+}
+
 ChimericFragmentVecMap_t LoadFragments(const std::string & fname) {
     fprintf(stderr,"Loading Fragments ...\n");
     ChimericFragmentVecMap_t fvMap;
@@ -393,7 +519,7 @@ ChimericFragmentVecMap_t LoadFragments(const std::string & fname) {
             *contig_ptr =   frag.getChr(ivIdx) +
                             ((frag.opens_left(ivIdx)) ? "L" : "R");
         }
-        //Add the fragment to the appropriate vector
+        //Add the fragment to the appropriate ve/ctor
         if(!fvMap.count(label)){
             fvMap.emplace(label,ChimericFragmentVec_t());
         }
@@ -510,7 +636,7 @@ bool OperateOnBPGraphVecPairMap(BPGraphVecPairMap_t & graphVecPairMap,
 }
 
 void OutputResults( const CRegionGraph & regGraph,
-                    const ChimericFragmentVecMap_t fragVecMap,
+                    const ReadRegionAssocVec_t & rrAssocVec,
                     const std::string & regFileName,
                     const std::string & edgeFileName,
                     const std::string & assocFileName,
@@ -521,6 +647,7 @@ void OutputResults( const CRegionGraph & regGraph,
     std::ofstream regionBedFile(regFileName);
     std::ofstream edgeTabFile(edgeFileName);
     std::ofstream assocTabFile(assocFileName);
+    std::ofstream rrAssocTabFile(regAssocFileName);
     // Track unique regions
     size_t nAssoc = 0;
     std::set<std::string> seenRegions;
@@ -553,9 +680,27 @@ void OutputResults( const CRegionGraph & regGraph,
             }
         }
     }
-    fprintf(stderr,"Wrote %lu Unique Regions to %s\n",seenRegions.size(),regFileName.c_str());
-    fprintf(stderr,"Wrote %d Edges to %s\n",regGraph.ecount(),edgeFileName.c_str());
-    fprintf(stderr,"Wrote %lu associations to %lu unique fragments to %s\n",nAssoc,seenFragments.size(),edgeFileName.c_str());
+    //Output the read region associations
+    std::unordered_set<std::string> seenFrag;
+    for(const ReadRegionAssoc_t & rrAssoc : rrAssocVec){
+        rrAssocTabFile << rrAssoc.to_string() << "\n";
+        if(rrAssoc.flag & BAM_FREAD1){
+            seenFrag.insert(rrAssoc.readName + "R1");
+        }
+        if(rrAssoc.flag & BAM_FREAD1){
+            seenFrag.insert(rrAssoc.readName + "R2");
+        }
+    }
+    fprintf(stderr,"Wrote %lu Unique Regions to %s\n",seenRegions.size(),
+            regFileName.c_str() );
+    fprintf(stderr,"Wrote %d Edges to %s\n",regGraph.ecount(),
+            edgeFileName.c_str() );
+    fprintf(stderr,
+            "Wrote %lu edge associations to %lu unique fragments to %s\n",
+            nAssoc, seenFragments.size(), assocFileName.c_str() );
+    fprintf(stderr,"Wrote %lu region associations to %lu unique reads to %s\n",
+            rrAssocVec.size(),seenFrag.size(),regAssocFileName.c_str());
+    
 }
 
 //Single threaded version processing fragments into BPGraphs
