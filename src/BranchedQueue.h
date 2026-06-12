@@ -9,11 +9,10 @@
   Edgetype must meet the following criteria:
     Has a public member readSet
     Has a public method cachedScore with signature double(const ContextType &, const ElementSetType &)
-    Has a public method addRead with signature bool(const ElementType &)
-    Has a public method removeRead with signature bool(const ElementType &)
+    Has a public method addSupport with signature bool(const ElementType &)
+    Has a public method removeSupport with signature bool(const ElementType &)
   ElementType must meet the following criteria
     Must be a pointer type
-    Have a public member mate
   ElementSetType should be a std::unordered_set<ElementType>
   ContextType has no special requirements (to my knowledge)
 */
@@ -55,7 +54,7 @@ protected:
 
 public:
     BranchedQueueNode_t(const EdgeType& e)
-        : childQueue(nullptr), descendentElements(e.readSet), edge(e), originalElements(e.readSet) {}
+        : childQueue(nullptr), descendentElements(e.supportSet), edge(e), originalElements(e.supportSet) {}
 
 protected:
     void addNode(BranchedQueueNode_pt<EdgeType, ElementType, ElementSetType, ContextType> node,
@@ -153,9 +152,8 @@ protected:
             }
 
             // Abstracted matching verification logic for elements/mates
-            for (const ElementType& elem : node->edge.readSet) {
-                if (curNode->descendentElements.count(elem) ||
-                    (elem->mate && curNode->descendentElements.count(elem->mate))) 
+            for (const ElementType& elem : node->edge.supportSet) {
+                if (curNode->descendentElements.count(elem))
                 {
                     preMergeIt = pit;
                     mergeIt = it;
@@ -173,13 +171,13 @@ protected:
         auto& mergeNode = *mergeIt;
         if (mergeNode->score(context, usedElements) >= node->score(context, usedElements)) {
             mergeNode->descendentElements.insert(node->descendentElements.begin(), node->descendentElements.end());
-            node->removeElements(mergeNode->edge.readSet, false);
+            node->removeElements(mergeNode->edge.supportSet, false);
             mergeNode->addNode(std::move(node), context, usedElements, bNewElement);
             return;
         }
 
         node->descendentElements.insert(mergeNode->descendentElements.begin(), mergeNode->descendentElements.end());
-        mergeNode->removeElements(node->edge.readSet, true);
+        mergeNode->removeElements(node->edge.supportSet, true);
         
         node->addNode(std::move(mergeNode), context, usedElements, bNewElement);
         this->data.erase_after(preMergeIt);
@@ -205,7 +203,7 @@ protected:
             auto& childVec = node->childQueue->data;
             for (auto it = childVec.begin(); it != childVec.end(); it++) {
                 if (cannabalize) {
-                    (*it)->addElements(node->edge.readSet);
+                    (*it)->addElements(node->edge.supportSet);
                 }
                 this->addNode(std::move(*it), false);
             }
@@ -221,7 +219,7 @@ void BranchedQueueNode_t<EdgeType, ElementType, ElementSetType, ContextType>::ad
     const ElementSetType& used,
     bool bNewElement) 
 {
-    if (!node->edge.readSet.size()) {
+    if (!node->edge.supportSet.size()) {
         if (node->childQueue) {
             for (auto& cNode : node->childQueue->data) {
                 this->addNode(std::move(cNode), context, used, false);
@@ -242,14 +240,14 @@ void BranchedQueueNode_t<EdgeType, ElementType, ElementSetType, ContextType>::ad
         if (!this->descendentElements.count(elem)) {
             it = elements.erase(it);
         } else if (this->originalElements.count(elem)) {
-            this->edge.addRead(elem); // Assumes Edge still implements addRead or general insert mapping
-            if (elem->mate && this->originalElements.count(elem->mate)) {
-                this->edge.addRead(elem->mate);
-            }
+            this->edge.addSupport(elem); 
+            //if (elem->mate && this->originalElements.count(elem->mate)) {
+            //    this->edge.addSupport(elem->mate);
+            //}
             it = elements.erase(it);
-        } else if (elem->mate && this->originalElements.count(elem->mate)) {
-            this->edge.addRead(elem->mate);
-            it = elements.erase(it);
+        //} else if (elem->mate && this->originalElements.count(elem->mate)) {
+        //    this->edge.addSupport(elem->mate);
+        //    it = elements.erase(it);
         } else {
             it++;
         }
@@ -270,10 +268,10 @@ size_t BranchedQueueNode_t<EdgeType, ElementType, ElementSetType, ContextType>::
 template <typename EdgeType, typename ElementType, typename ElementSetType, typename ContextType>
 void BranchedQueueNode_t<EdgeType, ElementType, ElementSetType, ContextType>::removeElements(const ElementSetType& elements, bool bRecurse) {
     for (const ElementType& elem : elements) {
-        this->edge.removeRead(elem);
-        if (elem->mate) {
-            this->edge.removeRead(elem->mate);
-        }
+        this->edge.removeSupport(elem);
+        //if (elem->mate) {
+        //    this->edge.removeSupport(elem->mate);
+        //}
     }
     if (bRecurse && this->childQueue) {
         this->childQueue->removeElements(elements);

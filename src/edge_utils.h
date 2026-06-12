@@ -10,69 +10,80 @@
 #include <vector>
 
 #include "utils.h"
+#include "sam_utils.h"
 #include <ssw.h>
 #include <ssw_cpp.h>
+
+
+struct CannonicalSeq_t {
+    protected:
+    std::string cannon;
+    std::string noncannon;
+    public:
+    CannonicalSeq_t(std::string s) : 
+        cannon(s), noncannon(get_seqrc(s))
+    {
+        if(!is_canonical(s)){
+            std::swap(cannon,noncannon);
+        }
+    }
+    const std::string & get(bool cannonical = true) const {
+        return (cannonical) ? cannon : noncannon;
+    }
+    //Determines if a DNA sequence is in canonical form (the lexicographically earlier sequence)
+    static bool is_canonical(const std::string & seq) {
+        int cmp = 0;
+        auto it = seq.begin();
+        auto rit = seq.rbegin();
+        while(&(*it) != &(*rit) && cmp == 0){
+            char r = 'N';
+            switch(*rit) {
+                case 'A': r = 'T'; break;
+                case 'C': r = 'G'; break;
+                case 'T': r = 'A'; break;
+                case 'G': r = 'C'; break;
+            }
+            if(*it != r) { cmp = (*it < r) ? -1 : 1; }
+            it++;
+            rit++;
+        }
+        return cmp <= 0;
+    }
+
+};
 
 struct Read_t;
 
 typedef std::shared_ptr<Read_t> Read_pt;
 
-//Object describing a read
 struct Read_t {
-    Read_t(std::string nm, bool bSplit, bool bViralR1) :
-        name(nm), isSplit(bSplit), viralR1(bViralR1) {}
-    std::string name;
-    std::string hostSegment;
-    std::string hostRC;
-    std::string virusSegment;
-    std::string virusRC;
-    bool isSplit = false;
-    bool viralR1 = false;
-    Read_pt mate = nullptr;
+    Read_t(std::string nm, std::string s, bool isr1) :
+        name(nm), seq(to_upper(s)), isR1(isr1), mate(nullptr) {}
+    Read_t(bam1_t* aln) : Read_t(   bam_get_qname(aln),
+                                    get_sequence(aln),
+                                    aln->core.flag & BAM_FREAD1) {}
+    const std::string name;
+    const CannonicalSeq_t seq;
+    const bool isR1;
+    //TODO: Handle mate requirement in branched queue
+    const Read_pt mate;
     int compare(const Read_t & other) const {
         if(this->name != other.name) {
             return (this->name < other.name) ? -1 : 1;
         }
-        if(this->hostSegment.size() != other.hostSegment.size()){
-            return (this->hostSegment.size() < other.hostSegment.size())
-                    ? -1 : 1;
+        if(this->isR1 != other.isR1) {
+            return (this->isR1) ? -1 : 1;
         }
-        if(this->virusSegment.size() != other.virusSegment.size()){
-            return (this->virusSegment.size() < other.virusSegment.size())
-                    ? -1 : 1;
-        }
-        if(this->isSplit != other.isSplit){
-            return (other.isSplit) ? -1 : 1;
-        }
-        if(this->viralR1 != other.viralR1){
-            return (this->viralR1) ? -1 : 1;
+        if(this->seq.get() != other.seq.get()){
+            return (this->seq.get() < other.seq.get()) ? -1 : 1;
         }
         return 0;
     }
     std::string to_string(bool seq = false) const {
         std::string str;
-        if(!seq){
-            str =   name + '-' + std::to_string(hostSegment.size()) + '-' + 
-                    std::to_string(virusSegment.size()) + '-' +
-                    std::to_string(isSplit) + std::to_string(viralR1);
-        } else {
-            if(hostSegment.size()){
-                str += std::to_string('>') + name + '_' + std::to_string(1);
-                str += std::to_string('\n') + hostSegment;
-            }
-            if(virusSegment.size()){
-                str += std::to_string('>') + name + '_' + std::to_string(2);
-                str += std::to_string('\n') + virusSegment;
-            }
-        }
+            str =   '-' + name + " R" + ((isR1) ? '1' : '2') +
+                    this->seq.get(); 
         return str;
-    }
-    const std::string & getSegment(bool bVirus, bool bRC) const {
-        if(bVirus){
-           return (bRC) ? this->virusRC : this->virusSegment;
-        } else {
-           return (bRC) ? this->hostRC : this->hostSegment;
-        }
     }
 };
 
@@ -88,65 +99,231 @@ struct Read_pt_HashFunctor {
     }
 };
 
+
+//Object describing a read
+//struct Read_t {
+//    Read_t(std::string nm, bool bSplit, bool bViralR1) :
+//        name(nm), isSplit(bSplit), viralR1(bViralR1) {}
+//    std::string name;
+//    std::string hostSegment;
+//    std::string hostRC;
+//    std::string virusSegment;
+//    std::string virusRC;
+//    bool isSplit = false;
+//    bool viralR1 = false;
+//    Read_pt mate = nullptr;
+//    int compare(const Read_t & other) const {
+//        if(this->name != other.name) {
+//            return (this->name < other.name) ? -1 : 1;
+//        }
+//        if(this->hostSegment.size() != other.hostSegment.size()){
+//            return (this->hostSegment.size() < other.hostSegment.size())
+//                    ? -1 : 1;
+//        }
+//        if(this->virusSegment.size() != other.virusSegment.size()){
+//            return (this->virusSegment.size() < other.virusSegment.size())
+//                    ? -1 : 1;
+//        }
+//        if(this->isSplit != other.isSplit){
+//            return (other.isSplit) ? -1 : 1;
+//        }
+//        if(this->viralR1 != other.viralR1){
+//            return (this->viralR1) ? -1 : 1;
+//        }
+//        return 0;
+//    }
+//    std::string to_string(bool seq = false) const {
+//        std::string str;
+//        if(!seq){
+//            str =   name + '-' + std::to_string(hostSegment.size()) + '-' + 
+//                    std::to_string(virusSegment.size()) + '-' +
+//                    std::to_string(isSplit) + std::to_string(viralR1);
+//        } else {
+//            if(hostSegment.size()){
+//                str += std::to_string('>') + name + '_' + std::to_string(1);
+//                str += std::to_string('\n') + hostSegment;
+//            }
+//            if(virusSegment.size()){
+//                str += std::to_string('>') + name + '_' + std::to_string(2);
+//                str += std::to_string('\n') + virusSegment;
+//            }
+//        }
+//        return str;
+//    }
+//    const std::string & getSegment(bool bVirus, bool bRC) const {
+//        if(bVirus){
+//           return (bRC) ? this->virusRC : this->virusSegment;
+//        } else {
+//           return (bRC) ? this->hostRC : this->hostSegment;
+//        }
+//    }
+//};
+//
+//struct Read_pt_EqFunctor {
+//    bool operator()(const Read_pt & a, const Read_pt & b) const {
+//        return a->compare(*b) == 0;
+//    }
+//};
+//
+//struct Read_pt_HashFunctor {
+//    size_t operator()(const Read_pt & a) const {
+//        return std::hash<std::string>{}(a->to_string());
+//    }
+//};
+
+struct ReadPair_t {
+    ReadPair_t() : R1(nullptr), R2(nullptr) {}
+    Read_pt R1;
+    Read_pt R2;
+    Read_pt & operator[](bool bR1){ return (bR1) ? R1 : R2; }
+    Read_pt & getRead(bool bR1){ return (bR1) ? R1 : R2; }
+};
+
+
+
+typedef std::shared_ptr<ReadPair_t> ReadPair_pt;
+typedef std::unordered_map<std::string,ReadPair_pt> Name2ReadPairMap_t;
+typedef std::unordered_set<ReadPair_pt> ReadPairSet_t;
 typedef std::unordered_map<std::string,Read_pt> Name2ReadMap_t;
 
 //Object describing a genomic location containing a
 //candidate junction
 struct Region_t {
-    Region_t(   const std::string & name, const std::string &sequence,
-                bool bVirus, const std::string & coordStr) :
-        sequence(sequence), isVirus(bVirus)
-    {
-        std::vector<std::string> fields = strsplit(name,',');
-        std::vector<std::string> coords = strsplit(coordStr,'-');
-        this->chr = fields[0];
-        this->left = std::stoul(fields[1]);
-        this->right = std::stoul(fields[2]);
-        this->seqLeft = std::stoul(coords[0]);
-        this->seqRight = std::stoul(coords[1]);
-        this->strand = fields[3][0];
-        for (auto & c: this->sequence) c = (char)toupper(c);
-    }
-    Region_t(kseq_t *seq, bool bVirus,const std::string & coordStr) : 
-        Region_t(std::string(seq->name.s),std::string(seq->seq.s),bVirus,coordStr)
+    enum REGION_INFO_BITS {
+        IS_VIRAL = 0x1,
+        OPENS_LEFT = 0x2
+    };
+    const long int id;
+    const std::string chromosome;
+    const std::string sequence;
+    const size_t offset;
+    const size_t end;
+    const uint8_t flag;
+    Region_t(   long int id, const std::string & chr, const std::string &seq,
+                size_t o, size_t e, bool bV, bool oL) :
+        id(id), chromosome(chr), sequence(to_upper(seq)),
+        offset(o), end(e), flag(flag_from_bool(bV,oL))
     {}
-    Region_t(const Region_t & other) :
-        left(other.left), right(other.right),
-        seqLeft(other.seqLeft), seqRight(other.seqRight),
-        chr(other.chr), strand(other.strand), sequence(other.sequence) {}
-    size_t left, right; //These are labels defining the region
-    //These are the actual genomic corrdinates of the sequence associated with this region
-    size_t seqLeft, seqRight; 
-    std::string chr;
-    char strand;
-    std::string sequence;
-    bool isVirus;
-    int compare(const Region_t other){
-        if(this->chr != other.chr){ 
-            return (this->chr < other.chr) ? -1 : 1;
+    //{
+    //    std::vector<std::string> fields = strsplit(name,',');
+    //    std::vector<std::string> coords = strsplit(coordStr,'-');
+    //    this->chr = fields[0];
+    //    this->left = std::stoul(fields[1]);
+    //    this->right = std::stoul(fields[2]);
+    //    this->seqLeft = std::stoul(coords[0]);
+    //    this->seqRight = std::stoul(coords[1]);
+    //    this->strand = fields[3][0];
+    //    for (auto & c: this->sequence) c = (char)toupper(c);
+    //}
+    //Region_t(kseq_t *seq, bool bVirus,const std::string & coordStr) : 
+    //    Region_t(std::string(seq->name.s),std::string(seq->seq.s),bVirus,coordStr)
+    //{}
+    //Region_t(const Region_t & other) :
+    //    left(other.left), right(other.right),
+    //    seqLeft(other.seqLeft), seqRight(other.seqRight),
+    //    chr(other.chr), strand(other.strand), sequence(other.sequence) {}
+    static uint8_t flag_from_bool(bool bVirus, bool opensLeft) {
+        uint8_t flag = 0;
+        if(bVirus) { flag |= IS_VIRAL; }
+        if(opensLeft) { flag |= OPENS_LEFT; }
+        return flag;
+    }
+    //size_t left, right; //These are labels defining the region
+    ////These are the actual genomic corrdinates of the sequence associated with this region
+    //size_t seqLeft, seqRight; 
+    //std::string chr;
+    //char strand;
+    //std::string sequence;
+    //bool isVirus;
+    int compare(const Region_t other) const {
+        if(this->chromosome != other.chromosome){ 
+            return (this->chromosome < other.chromosome) ? -1 : 1;
         }
-        if(this->strand != other.strand){
-            return (this->strand == '-') ? -1 : 1;
+        //host less than viral, opens left less than opens right
+        if(this->flag != other.flag){
+            return (this->flag < other.flag) ? -1 : 1;
         }
-        if(this->left != other.left){
-            return (this->left < other.left) ? -1 : 1;
+        if(this->offset != other.offset){
+            return (this->offset < other.offset) ? -1 : 1;
         }
-        if(this->right != other.right) {
-            return (this->right < other.right) ? -1 : 1;
+        if(this->end != other.end) {
+            return (this->end < other.end) ? -1 : 1;
         }
         return 0;
     }
+    bool opensLeft() const { return flag & OPENS_LEFT; }
+    bool isViral() const { return flag & IS_VIRAL; }
+    char strand() const {
+        return (bool(flag & OPENS_LEFT) == bool(flag & IS_VIRAL)) ? '+' : '-';
+    }
     std::string to_string(bool seq=false) const {
-        std::string str=    '>' + chr + ":" + strand +
-                            std::to_string(left) + "-" +
-                            std::to_string(right);
-        if(seq) str += sequence;
+        std::string str=    '>' + chromosome + ":(" + 
+                            std::to_string(int(flag)) + ")" +
+                            std::to_string(offset+1) + "-" +
+                            std::to_string(end);
+        if(seq) str += '\n' + sequence;
         return str;
     }
 };
 
+////Object describing a genomic location containing a
+////candidate junction
+//struct Region_t {
+//    Region_t(   const std::string & name, const std::string &sequence,
+//                bool bVirus, const std::string & coordStr) :
+//        sequence(sequence), isVirus(bVirus)
+//    {
+//        std::vector<std::string> fields = strsplit(name,',');
+//        std::vector<std::string> coords = strsplit(coordStr,'-');
+//        this->chr = fields[0];
+//        this->left = std::stoul(fields[1]);
+//        this->right = std::stoul(fields[2]);
+//        this->seqLeft = std::stoul(coords[0]);
+//        this->seqRight = std::stoul(coords[1]);
+//        this->strand = fields[3][0];
+//        for (auto & c: this->sequence) c = (char)toupper(c);
+//    }
+//    Region_t(kseq_t *seq, bool bVirus,const std::string & coordStr) : 
+//        Region_t(std::string(seq->name.s),std::string(seq->seq.s),bVirus,coordStr)
+//    {}
+//    Region_t(const Region_t & other) :
+//        left(other.left), right(other.right),
+//        seqLeft(other.seqLeft), seqRight(other.seqRight),
+//        chr(other.chr), strand(other.strand), sequence(other.sequence) {}
+//    size_t left, right; //These are labels defining the region
+//    //These are the actual genomic corrdinates of the sequence associated with this region
+//    size_t seqLeft, seqRight; 
+//    std::string chr;
+//    char strand;
+//    std::string sequence;
+//    bool isVirus;
+//    int compare(const Region_t other){
+//        if(this->chr != other.chr){ 
+//            return (this->chr < other.chr) ? -1 : 1;
+//        }
+//        if(this->strand != other.strand){
+//            return (this->strand == '-') ? -1 : 1;
+//        }
+//        if(this->left != other.left){
+//            return (this->left < other.left) ? -1 : 1;
+//        }
+//        if(this->right != other.right) {
+//            return (this->right < other.right) ? -1 : 1;
+//        }
+//        return 0;
+//    }
+//    std::string to_string(bool seq=false) const {
+//        std::string str=    '>' + chr + ":" + strand +
+//                            std::to_string(left) + "-" +
+//                            std::to_string(right);
+//        if(seq) str += sequence;
+//        return str;
+//    }
+//};
+
 typedef std::shared_ptr<Region_t> Region_pt;
 typedef std::unordered_map<std::string,Region_pt> Name2RegionMap_t;
+typedef std::unordered_map<long int,Region_pt> RegID2RegionMap_t;
 
 struct Region_pt_EqFunctor {
     bool operator()(const Region_pt & a, const Region_pt & b) const{
@@ -223,66 +400,72 @@ typedef std::unordered_map< SQPair_t,StripedSmithWaterman::Alignment,
 
 //Object associating a pair of regions and the reads spanning the pair
 struct Edge_t {
+    long int id;
     Region_pt hostRegion;
     Region_pt virusRegion;
-    ReadSet_t readSet;
-    ReadSet_t uniqueReadSet;
+    ReadPairSet_t supportSet;
+    //ReadSet_t readSet;
+    //ReadSet_t uniqueReadSet;
     //Read2ReadsMap_t duplicatedReads;
     size_t hostOffset;
     size_t virusOffset;
     size_t nSplit = 0;
     double lastScore = -1;
-    Edge_t() :        hostRegion(nullptr), virusRegion(nullptr), readSet(),
-                uniqueReadSet(), hostOffset(0), virusOffset(0) {}
+    Edge_t() :  hostRegion(nullptr), virusRegion(nullptr), supportSet(),
+                hostOffset(0), virusOffset(0) {}
     //Edge_t(const std::string & regStr, const std::string & readStr);
     Edge_t(Region_pt hostReg, Region_pt virusReg) :
-            hostRegion(hostReg), virusRegion(virusReg), readSet(),
-            uniqueReadSet(), hostOffset(0), virusOffset(0) {}
+            hostRegion(hostReg), virusRegion(virusReg), supportSet(),
+            hostOffset(0), virusOffset(0) {}
     Edge_t(const Edge_t & other) :
         hostRegion(other.hostRegion), virusRegion(other.virusRegion),
-        readSet(other.readSet), uniqueReadSet(other.uniqueReadSet),
+        supportSet(other.supportSet), 
         hostOffset(other.hostOffset), virusOffset(other.virusOffset), 
         nSplit(other.nSplit) {}
     public:
-    bool addRead(const Read_pt & read){
-        auto res = this->readSet.insert(read);
+    //TODO: Figure out how to have SPLIT status stored fro rapid and repeated access
+    bool addSupport(const ReadPair_pt & frag, bool isSplit = false){
+        auto res = this->supportSet.insert(frag);
         if(res.second){
             this->lastScore = -1;
-            if(read->isSplit) nSplit++;
+            if(isSplit) nSplit++;
+            this->lastScore = -1;
             return true;
         }
         return false;
     }
     double cachedScore(   const AlignmentMap_t & alnMap,
-                    const ReadSet_t & usedReads)
+                    const ReadPairSet_t & used)
     {
         if(this->lastScore == -1)
-            this->lastScore = this->score(alnMap,usedReads);
+            this->lastScore = this->score(alnMap,used);
         return this->lastScore;
     }
-    bool removeRead(const Read_pt & read){
+    bool removeSupport(const ReadPair_pt & frag, bool isSplit = false){
         //if(this->readSet.empty()) return false;
-        if(!this->readSet.erase(read)) {
+        if(!this->supportSet.erase(frag)) {
             return false;
         }
-        if(read->isSplit && nSplit) nSplit--;
+        if(isSplit && nSplit) nSplit--;
         this->lastScore = -1;
         return true;
     }
     double score(   const AlignmentMap_t & alnMap,
-                    const ReadSet_t & usedReads,
-                    bool useCache = false) const
+                    const ReadPairSet_t & used) const
     {
         double my_score = 0;
-        for(const Read_pt & read : this->readSet){
-           if(usedReads.count(read)) continue; 
-               SQPair_t hPair(this->hostRegion,read);
-               SQPair_t vPair(this->virusRegion,read);
-               const StripedSmithWaterman::Alignment & hAln =
-               alnMap.at(hPair);
-               const StripedSmithWaterman::Alignment & vAln =
-               alnMap.at(vPair);
-               my_score += hAln.sw_score + vAln.sw_score;        
+        for(const ReadPair_pt & frag : this->supportSet){
+            if(used.count(frag)) { continue; }
+            for ( bool checkR1 : {true, false} ){
+                for ( const Region_pt & curReg :
+                        {this->hostRegion, this->virusRegion})
+                {
+                    SQPair_t pair(curReg,frag->getRead(checkR1));
+                    const StripedSmithWaterman::Alignment & aln =
+                        alnMap.at(pair);
+                    my_score += aln.sw_score;
+                }
+            }
         }
         return my_score;
     }
