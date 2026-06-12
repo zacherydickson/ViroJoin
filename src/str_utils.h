@@ -61,4 +61,10 @@ std::string to_strjoin(It begin, It end, char delim, F transformer = F()) {
     return str;
 }
 
+std::string to_upper(const std::string & str) {
+    std::string out = str;
+    for(auto & c : out) { c = (char)toupper(c); }
+    return out;
+}
+
 #endif
