@@ -415,9 +415,11 @@ struct Edge_t {
     public:
     size_t hostOffset;
     size_t virusOffset;
+    protected:
     size_t nSplit = 0;
     //double lastScore = -1;
     double lastScore = -1;
+    public:
     Edge_t() :  hostRegion(nullptr), virusRegion(nullptr), supportSet(),
                 hostOffset(0), virusOffset(0) {}
     //Edge_t(const std::string & regStr, const std::string & readStr);
@@ -431,16 +433,35 @@ struct Edge_t {
         nSplit(other.nSplit) {}
     public:
     const ReadPairSet_t & getSupport() const { return this->supportSet; }
-    bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t alnMap){
+    bool addSupport(const ReadPair_pt & frag, ReadPairAlnSummary_t summary) {
         auto res = this->supportSet.insert(frag);
         if(res.second){
-            ReadPairAlnSummary_t summary = this->getRPAlnSummary(frag,alnMap);
             if(summary.isSplit) nSplit++;
             this->lastScore += summary.score;
             this->supportAlnSummaryMap[frag] = summary;
             return true;
         }
         return false;
+    }
+    bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t alnMap){
+        return addSupport(frag,this->getRPAlnSummary(frag,alnMap));
+    }
+    bool transferSupport(const ReadPair_pt & frag, Edge_t & other,bool bRemove = true){
+        //Cannot transfer support an edge does not have
+        if(!this->supportSet.count(frag)) { return false; }
+        //Cannot transfer support to an edge with different regions
+        if( (this->hostRegion->compare(*other.hostRegion) != 0) ||
+            (this->virusRegion->compare(*other.virusRegion) != 0) )
+        {
+            return false;
+        }
+        //
+        //Add the support from this fragment to the new edge
+        bool retVal = other.addSupport(frag,this->supportAlnSummaryMap[frag]);
+        if(bRemove) {
+            retVal = retVal && (this->removeSupport(frag));
+        }
+        return retVal;
     }
     protected:
     ReadPairAlnSummary_t getRPAlnSummary(   const ReadPair_pt & frag,
@@ -478,6 +499,8 @@ struct Edge_t {
         return summary;
     }
     public:
+    size_t splitCount() const { return this->nSplit; }
+    bool isSplit() const { return this->nSplit > 0; }
     //Retained for backwards compatibility
     double cachedScore(   const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used)
@@ -524,10 +547,8 @@ struct Edge_t {
     //void parseReadString(const std::string & readStr);
 };
 
-struct AlignedEdge_t {
 
-};
-
+size_t Edge_t::MinimumClipLen = 20;
 
 #endif //SURVERYOR_EDGE_UTILS_H
 
