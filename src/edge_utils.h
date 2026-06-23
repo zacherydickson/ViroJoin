@@ -58,15 +58,13 @@ typedef std::shared_ptr<Read_t> Read_pt;
 
 struct Read_t {
     Read_t(std::string nm, std::string s, bool isr1) :
-        name(nm), seq(to_upper(s)), isR1(isr1), mate(nullptr) {}
+        name(nm), seq(to_upper(s)), isR1(isr1) {}
     Read_t(bam1_t* aln) : Read_t(   bam_get_qname(aln),
                                     get_sequence(aln),
                                     aln->core.flag & BAM_FREAD1) {}
     const std::string name;
     const CannonicalSeq_t seq;
     const bool isR1;
-    //TODO: Handle mate requirement in branched queue
-    const Read_pt mate;
     int compare(const Read_t & other) const {
         if(this->name != other.name) {
             return (this->name < other.name) ? -1 : 1;
@@ -178,7 +176,6 @@ struct ReadPair_t {
     Read_pt & operator[](bool bR1){ return (bR1) ? R1 : R2; }
     Read_pt & getRead(bool bR1){ return (bR1) ? R1 : R2; }
 };
-
 
 
 typedef std::shared_ptr<ReadPair_t> ReadPair_pt;
@@ -398,18 +395,28 @@ typedef std::unordered_map< SQPair_t,StripedSmithWaterman::Alignment,
                             SQPair_HashFunctor,SQPair_EqFunctor>
             AlignmentMap_t;
 
+
+struct ReadPairAlnSummary_t {
+    bool isSplit;
+    double score;
+};
+typedef std::unordered_map<ReadPair_pt,ReadPairAlnSummary_t> ReadPairAlnSummaryMap_t;
+
 //Object associating a pair of regions and the reads spanning the pair
 struct Edge_t {
+    static size_t MinimumClipLen;
+    public:
     long int id;
     Region_pt hostRegion;
     Region_pt virusRegion;
+    protected:
     ReadPairSet_t supportSet;
-    //ReadSet_t readSet;
-    //ReadSet_t uniqueReadSet;
-    //Read2ReadsMap_t duplicatedReads;
+    ReadPairAlnSummaryMap_t supportAlnSummaryMap;
+    public:
     size_t hostOffset;
     size_t virusOffset;
     size_t nSplit = 0;
+    //double lastScore = -1;
     double lastScore = -1;
     Edge_t() :  hostRegion(nullptr), virusRegion(nullptr), supportSet(),
                 hostOffset(0), virusOffset(0) {}
@@ -423,55 +430,102 @@ struct Edge_t {
         hostOffset(other.hostOffset), virusOffset(other.virusOffset), 
         nSplit(other.nSplit) {}
     public:
-    //TODO: Figure out how to have SPLIT status stored fro rapid and repeated access
-    bool addSupport(const ReadPair_pt & frag, bool isSplit = false){
+    const ReadPairSet_t & getSupport() const { return this->supportSet; }
+    bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t alnMap){
         auto res = this->supportSet.insert(frag);
         if(res.second){
-            this->lastScore = -1;
-            if(isSplit) nSplit++;
-            this->lastScore = -1;
+            ReadPairAlnSummary_t summary = this->getRPAlnSummary(frag,alnMap);
+            if(summary.isSplit) nSplit++;
+            this->lastScore += summary.score;
+            this->supportAlnSummaryMap[frag] = summary;
             return true;
         }
         return false;
     }
+    protected:
+    ReadPairAlnSummary_t getRPAlnSummary(   const ReadPair_pt & frag,
+                                            const AlignmentMap_t alnMap)
+    {
+        ReadPairAlnSummary_t summary = {false,0};
+        if(!this->hostRegion || !this->virusRegion) { return summary; }
+        //Check each combination of Read vs Region and calculate the total score
+        //  as well as whether the alignment is split
+        for ( bool checkR1 : {true, false} ){
+            int splitCount = 0;
+            for ( const Region_pt & curReg :
+                    {this->hostRegion, this->virusRegion})
+            {
+                SQPair_t pair(curReg,frag->getRead(checkR1));
+                //Skip read-region pairs with no alignment
+                if(!alnMap.count(pair)) { continue; }
+                const StripedSmithWaterman::Alignment & aln =
+                    alnMap.at(pair);
+                int opIdx = curReg->opensLeft() ? 0 : aln.cigar.size()-1;
+                uint32_t c = aln.cigar[opIdx];
+                if( cigar_int_to_op(c) == 'S' &&
+                    cigar_int_to_len(c) >= Edge_t::MinimumClipLen)
+                {
+                    splitCount++;
+                }
+                summary.score += aln.sw_score;
+            }
+            //For a read to be split it must have a split alignment to both the
+            // host and viral regions
+            if(splitCount == 2) {
+                summary.isSplit = true;
+            }
+        }
+        return summary;
+    }
+    public:
+    //Retained for backwards compatibility
     double cachedScore(   const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used)
     {
-        if(this->lastScore == -1)
-            this->lastScore = this->score(alnMap,used);
         return this->lastScore;
+        //if(this->lastScore == -1)
+        //    this->lastScore = this->score(alnMap,used);
+        //return this->lastScore;
     }
-    bool removeSupport(const ReadPair_pt & frag, bool isSplit = false){
+    bool removeSupport(const ReadPair_pt & frag){
         //if(this->readSet.empty()) return false;
         if(!this->supportSet.erase(frag)) {
             return false;
         }
-        if(isSplit && nSplit) nSplit--;
-        this->lastScore = -1;
+        ReadPairAlnSummary_t summary = this->supportAlnSummaryMap.at(frag);
+        this->supportAlnSummaryMap.erase(frag);
+        if(summary.isSplit && nSplit) nSplit--;
+        this->lastScore -= summary.score;
         return true;
     }
+    //Retained for backwards compatibility
     double score(   const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used) const
     {
-        double my_score = 0;
-        for(const ReadPair_pt & frag : this->supportSet){
-            if(used.count(frag)) { continue; }
-            for ( bool checkR1 : {true, false} ){
-                for ( const Region_pt & curReg :
-                        {this->hostRegion, this->virusRegion})
-                {
-                    SQPair_t pair(curReg,frag->getRead(checkR1));
-                    const StripedSmithWaterman::Alignment & aln =
-                        alnMap.at(pair);
-                    my_score += aln.sw_score;
-                }
-            }
-        }
-        return my_score;
+        return lastScore;
+        //double my_score = 0;
+        //for(const ReadPair_pt & frag : this->supportSet){
+        //    if(used.count(frag)) { continue; }
+        //    for ( bool checkR1 : {true, false} ){
+        //        for ( const Region_pt & curReg :
+        //                {this->hostRegion, this->virusRegion})
+        //        {
+        //            SQPair_t pair(curReg,frag->getRead(checkR1));
+        //            const StripedSmithWaterman::Alignment & aln =
+        //                alnMap.at(pair);
+        //            my_score += aln.sw_score;
+        //        }
+        //    }
+        //}
+        //return my_score;
     }
-    private:
+    //private:
     //void parseRegString(const std::string & regStr);
     //void parseReadString(const std::string & readStr);
+};
+
+struct AlignedEdge_t {
+
 };
 
 

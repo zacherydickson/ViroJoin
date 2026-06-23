@@ -111,7 +111,8 @@ void LoadData(  const std::string & edgeFName,
                 EdgeVec_t & edgeVec);
 EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
                     const Name2ReadPairMap_t & rpMap,
-                    const RegID2RegionMap_t & regMap);
+                    const RegID2RegionMap_t & regMap,
+                    const AlignmentMap_t & alnMap);
 //void LoadEdges( std::string edgeFName,
 //                Read2RegionsMap_t & read2regSetMap, 
 //                Region2ReadsMap_t & reg2readSetMap,
@@ -206,6 +207,8 @@ int main(int argc, const char* argv[]) {
     //LoadVirusNames(virus_ref_file_name,VirusNameSet);
     Config = parse_config(config_file_name);
     AlnMaskLen =  Config.read_len/2;
+    //Set global variable across edges
+    Edge_t::MinimumClipLen = Config.min_sc_size;
     ExploratoryDedupliction = Config.explore;
     Stats = parse_stats(stats_file_name);
     JointHeader = sam_hdr_read(sam_open(bam_file_name.c_str(),"r"));
@@ -250,13 +253,15 @@ int main(int argc, const char* argv[]) {
             reg2readSetMap[region].insert(readPair->getRead(checkingR1));
         }
     }
-    //Load Edges
     
-    EdgeVec_t edgeVec = LoadEdges(  edge_file_name, fragment_edge_file_name,
-                                    rNametoReadPairMap, regIdtoRegionMap);
     //Perform alignments
     AlignmentMap_t alnMap;
     AlignReads(read2regSetMap,alnMap);
+
+    //Load Edges
+    EdgeVec_t edgeVec = LoadEdges(  edge_file_name, fragment_edge_file_name,
+                                    rNametoReadPairMap, regIdtoRegionMap,
+                                    alnMap);
     //TODO:
     ////## Alignments 
     RemoveUnalignedReads(edgeVec,alnMap);
@@ -496,7 +501,7 @@ breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset){
 call_t ConstructCall(        int id, const Edge_t & edge,
                         const AlignmentMap_t & alnMap)
 {
-    size_t nReads = edge.supportSet.size();
+    size_t nReads = edge.getSupport().size();
     breakpoint_t hostBP = ConstructBreakpoint(        edge.hostRegion,
                                                 edge.hostOffset);
     breakpoint_t virusBP = ConstructBreakpoint(        edge.virusRegion,
@@ -1092,7 +1097,8 @@ bool IsConsistent(const std::string & seq1, const std::string & seq2){
 //Output - A vector of edge objects
 EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
                     const Name2ReadPairMap_t & rpMap,
-                    const RegID2RegionMap_t & regMap)
+                    const RegID2RegionMap_t & regMap,
+                    const AlignmentMap_t & alnMap)
 {
     fprintf(stderr,"Loading Edges from %s and %s ...\n",edgeFName.c_str(),
             feFName.c_str());
@@ -1112,7 +1118,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
     long int groupID;
     size_t counter = 0;
     while(feFile >> name >> edgeID >> groupID){
-        edgeVec[edgeID2VecIdxMap.at(edgeID)].addSupport(rpMap.at(name));
+        edgeVec[edgeID2VecIdxMap.at(edgeID)].addSupport(rpMap.at(name),alnMap);
         counter++;
     }
     fprintf(stderr,"Loaded %lu fragment-edge associations and %lu edges\n",
@@ -1522,7 +1528,7 @@ void OutputEdges(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     used);
         OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edgeVec.back(),alnMap,used);
         //Update the used reads
-        for(const ReadPair_pt & frag : edgeVec.back().supportSet){
+        for(const ReadPair_pt & frag : edgeVec.back().getSupport()){
             used.insert(frag);
             //Split reads from paired data can have both segments supporting a junction as they
             //may be split differently, but once one is used, the other cannot support any
@@ -1611,7 +1617,7 @@ bool PassesEffectiveReadCount(  const Edge_t & edge,
     //size_t count = edge.supportSet.size() + ((edge.nSplit) ? SplitBonus : 0);
     double count = 0;
     bool bSplit = false;
-    for(const ReadPair_pt & frag : edge.supportSet){
+    for(const ReadPair_pt & frag : edge.getSupport()){
         if(!used || !used->count(frag)){
             //TODO:FIXME
             double update = 1;
@@ -1739,7 +1745,7 @@ void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap){
     fprintf(stderr,"Removing Unaligned reads from %zu edges...\n",edgeVec.size());
     for( Edge_t & edge : edgeVec){
         std::vector<ReadPair_pt> toRemoveVec;
-        for( const ReadPair_pt & frag : edge.supportSet){
+        for( const ReadPair_pt & frag : edge.getSupport()){
             bool bPass = false;
             //Check if there is at least one alignment to both the host and the virus
             for( const Region_pt & curReg : { edge.hostRegion, edge.virusRegion } ){
@@ -1748,8 +1754,8 @@ void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap){
                     SQPair_t sqp(curReg,frag->getRead(checkR1));
                     bPass = (alnMap.count(sqp) > 0);
                 }
-                //If one side fails, both do
-                if(!bPass) {break; }
+                //If one region fails, both do
+                if(!bPass) { break; }
             }
             if(!bPass){
                 toRemoveVec.push_back(frag);
