@@ -399,6 +399,7 @@ typedef std::unordered_map< SQPair_t,StripedSmithWaterman::Alignment,
 struct ReadPairAlnSummary_t {
     bool isSplit;
     double score;
+    int32_t hostLeft, hostRight, virusLeft, virusRight;
 };
 typedef std::unordered_map<ReadPair_pt,ReadPairAlnSummary_t> ReadPairAlnSummaryMap_t;
 
@@ -412,10 +413,9 @@ struct Edge_t {
     protected:
     ReadPairSet_t supportSet;
     ReadPairAlnSummaryMap_t supportAlnSummaryMap;
-    public:
+    bool validOffsets = false;
     size_t hostOffset;
     size_t virusOffset;
-    protected:
     size_t nSplit = 0;
     //double lastScore = -1;
     double lastScore = -1;
@@ -433,9 +433,17 @@ struct Edge_t {
         nSplit(other.nSplit) {}
     public:
     const ReadPairSet_t & getSupport() const { return this->supportSet; }
+    std::pair<size_t,size_t> getOffsets() {
+        return (validOffsets) ? std::make_pair(hostOffset,virusOffset) :
+                                determineOffsets();
+    }
+    const ReadPairAlnSummaryMap_t & getSupportSummaryMap() const {
+        return this->supportAlnSummaryMap;
+    }
     bool addSupport(const ReadPair_pt & frag, ReadPairAlnSummary_t summary) {
         auto res = this->supportSet.insert(frag);
         if(res.second){
+            validOffsets = false;
             if(summary.isSplit) nSplit++;
             this->lastScore += summary.score;
             this->supportAlnSummaryMap[frag] = summary;
@@ -464,11 +472,46 @@ struct Edge_t {
         return retVal;
     }
     protected:
+    //Iterates over supporting fragments and identifies the most junction proximal
+    //  position observed; This is cached for the future;
+    std::pair<size_t,size_t> determineOffsets() {
+        //Iterate over reads to find the extremes
+        for ( const Region_pt & reg : {hostRegion, virusRegion} ) { 
+            int32_t minLeft = reg->sequence.length();
+            int32_t maxRight = 0;
+            for( const auto & pair :  supportAlnSummaryMap) {
+                const ReadPairAlnSummary_t & summary = pair.second;
+                //Get the left and right positions of the alignment,
+                // and update the overall positions for the pair
+                const int32_t * left_ptr = (reg == this->hostRegion) ?
+                                        &(summary.hostLeft) :
+                                        &(summary.virusLeft);
+                const int32_t * right_ptr = (reg == this->hostRegion) ?
+                                        &(summary.hostRight) :
+                                        &(summary.virusRight);
+                if(*left_ptr < minLeft) { minLeft = *left_ptr; } 
+                if(*right_ptr > maxRight) { maxRight = *right_ptr; } 
+            }
+            //Set the appropriate offset
+            auto * offset_ptr = (reg == hostRegion) ?   &(hostOffset) :
+                                                        &(virusOffset);
+            *offset_ptr = (reg->opensLeft()) ? minLeft : maxRight;
+        }
+        validOffsets=true;
+        return std::make_pair(hostOffset,virusOffset);
+    }
+    //Given alignment information across all read-region combis,
+    //a summary is extracted for the pair of reads mapped to this edges' regions
+    //This is cached for future reference
     ReadPairAlnSummary_t getRPAlnSummary(   const ReadPair_pt & frag,
                                             const AlignmentMap_t alnMap)
     {
-        ReadPairAlnSummary_t summary = {false,0};
+        ReadPairAlnSummary_t summary = {false,0,-1,-1,-1,-1};
         if(!this->hostRegion || !this->virusRegion) { return summary; }
+        summary.hostLeft = this->hostRegion->sequence.length();
+        summary.hostRight = 0;
+        summary.virusLeft = this->virusRegion->sequence.length();
+        summary.virusRight = 0;
         //Check each combination of Read vs Region and calculate the total score
         //  as well as whether the alignment is split
         for ( bool checkR1 : {true, false} ){
@@ -489,6 +532,16 @@ struct Edge_t {
                     splitCount++;
                 }
                 summary.score += aln.sw_score;
+                //Get the left and right positions of the alignment,
+                // and update the overall positions for the pair
+                int32_t * left_ptr = (curReg == this->hostRegion) ?
+                                        &(summary.hostLeft) :
+                                        &(summary.virusLeft);
+                int32_t * right_ptr = (curReg == this->virusRegion) ?
+                                        &(summary.hostRight) :
+                                        &(summary.virusRight);
+                if(aln.ref_begin < *left_ptr) { *left_ptr = aln.ref_begin; } 
+                if(aln.ref_end > *right_ptr) { *right_ptr = aln.ref_end; } 
             }
             //For a read to be split it must have a split alignment to both the
             // host and viral regions
@@ -519,6 +572,7 @@ struct Edge_t {
         this->supportAlnSummaryMap.erase(frag);
         if(summary.isSplit && nSplit) nSplit--;
         this->lastScore -= summary.score;
+        validOffsets = false;
         return true;
     }
     //Retained for backwards compatibility
