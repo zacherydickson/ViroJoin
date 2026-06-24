@@ -295,36 +295,61 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
     //Iterate over regions and do the alignments
     std::vector<const SQPair_t *> sqPairVec;
     for( const Region_pt & reg : regSet){
-        StripedSmithWaterman::Alignment bAln;
-        bAln.sw_score=0;
-        bool bPass = true;
+        StripedSmithWaterman::Alignment aln;
+        aln.sw_score=0;
         for(char strand : {'-' , '+'}){ //Align in both the fwd and reverse orientations
             const std::string & query = read->seq.get(strand == '+');
-            StripedSmithWaterman::Alignment lAln;
-            bPass = Aligner.Align(  query.c_str(),reg->sequence.c_str(),
-                                    reg->sequence.length(),
-                                        AlnFilter, &(lAln),AlnMaskLen);
-            //Co-opting unused variable in structure to store the strand of the read
-            lAln.sw_score_next_best = (uint16_t) strand;
-            if(bPass && lAln.sw_score > bAln.sw_score){
-                bAln = lAln;
-            }
+            StripedSmithWaterman::Alignment curAln;
+            int step = 0;
+            bool bPass = true;
+            uint32_t opdata;
+            bool bClipped = false;
+            do {
+                switch (step) {
+                    case 0: //Does the read align?
+                        bPass = Aligner.Align(  query.c_str(),
+                                                reg->sequence.c_str(),
+                                                reg->sequence.length(),
+                                                AlnFilter, &(curAln),AlnMaskLen);
+                        //Co-opting unused variable in structure to store the strand of the read
+                        curAln.sw_score_next_best = (uint16_t) strand;
+                        break;
+                    case 1: //Is alignment better than the other strand? (or first)
+                        bPass = curAln.sw_score > aln.sw_score;
+                        break;
+                    case 2: // alignment length, score, clippedness
+                        //curAln is better than previous best
+                        bPass = accept_alignment(curAln, Config.min_sc_size);
+                        break;
+                    case 3: // read low complexity filter
+                        bPass = !is_low_complexity(query.c_str(),
+                                            curAln.query_begin,curAln.query_end);
+                        break;
+                    case 4: // region low complexity filter
+                        bPass = !is_low_complexity(reg->sequence.c_str(),
+                                            curAln.ref_begin,curAln.ref_end);
+                        break;
+                    case 5: //Split side filter
+                        //Get the cigar op on the distal side of the read
+                        opdata = curAln.cigar[  (reg->opensLeft()) ?  
+                                                curAln.cigar.size()-1 : 0 ];
+                        bClipped =  (cigar_int_to_op(opdata) == 'S') && 
+                                    ( cigar_int_to_len(opdata) >=
+                                        uint32_t(Config.min_sc_size) );
+                        //Fail if an alignment is split on the distal side
+                        bPass = !bClipped;
+                }
+            } while(++step < 6 && bPass);
+            if(bPass) { aln = curAln; }
         }
+        // Do not store failed alignments
+        if(aln.sw_score <= 0) { continue; }
+        // Store the alignment
         Mtx.lock();
-        auto res = alnMap.insert(std::make_pair(  SQPair_t(reg,read), bAln));
+        auto res = alnMap.insert(std::make_pair(  SQPair_t(reg,read), aln));
         Mtx.unlock();
-        StripedSmithWaterman::Alignment & aln = res.first->second;
-        if(bPass) {
-            //TODO: May want to make sure that the split orientation of the aligned read matches the open side
-            //of the region
-            bPass = accept_alignment(aln, Config.min_sc_size);
-        }
-        if(!bPass) { //If the Alignment failed
-            Mtx.lock();
-            alnMap.erase(res.first);
-            Mtx.unlock();
-            continue;
-        }
+        //Track all passing alignments for future filtering against
+        //highest observed scores across all regions in each genome
         sqPairVec.push_back(&(res.first->first));
         if(aln.sw_score > bestScore[reg->isViral()]){
            bestScore[reg->isViral()] = aln.sw_score;
@@ -801,38 +826,24 @@ void FilterEdgeVec(EdgeVec_t & edgeVec, const ReadPairSet_t * used){
 }
 
 
-////Identifies read pairs with an apparent insert size which is too large
-////and removes them
-////Inputs - an edge to process
-////         - an alignment map 
-////Output - None, modifies the edge object
-//void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
-//    //TODO: FIXME Change in edge support type
-////    std::vector<Read_pt> toRemoveVec;
-////    for(const ReadPair_pt & frag : edge.supportSet){
-////        SQPair_t hPair(edge.hostRegion,frag);
-////        SQPair_t vPair(edge.virusRegion,frag);
-////        const StripedSmithWaterman::Alignment & hAln = alnMap.at(hPair);
-////        const StripedSmithWaterman::Alignment & vAln = alnMap.at(vPair);
-////        JunctionInterval_t hJIV = ConstructJIV( edge.hostRegion->strand(),
-////                                                false,hAln);
-////        JunctionInterval_t vJIV = ConstructJIV( edge.virusRegion->strand(),
-////                                                true,vAln);
-////        size_t hIS = 1 + ((edge.hostOffset > hJIV.distal) ?
-////                            (edge.hostOffset - hJIV.distal) :
-////                            (hJIV.distal - edge.hostOffset));
-////        size_t vIS = 1 + ((edge.virusOffset > vJIV.distal) ?
-////                            (edge.virusOffset - vJIV.distal) :
-////                            (vJIV.distal - edge.virusOffset));
-////        size_t is = hIS + vIS;
-////        if(is > size_t(Stats.max_is)){ // Insert size is too high
-////            toRemoveVec.push_back(frag);
-////        }
-////    }
-////    for(const ReadPair_pt & frag : toRemoveVec){
-////        edge.removeSupport(frag);
-////    }
-//}
+//Identifies read pairs with an apparent insert size which is too large
+//and removes them
+//Inputs - an edge to process
+//         - an alignment map 
+//Output - None, modifies the edge object
+void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
+    std::vector<ReadPair_pt> toRemoveVec;
+    for(auto & pair : edge.getSupportSummaryMap()){
+        const ReadPair_pt & frag = pair.first;
+        const ReadPairAlnSummary_t & summary = pair.second;
+        if(summary.calcIS() > Stats.max_is){
+            toRemoveVec.push_back(frag);
+        }
+    }
+    for(const ReadPair_pt & frag : toRemoveVec){
+        edge.removeSupport(frag);
+    }
+}
 
 ////Remove reads that have suspicious alignments, alignments are considered
 ////suspicious if:
@@ -843,57 +854,56 @@ void FilterEdgeVec(EdgeVec_t & edgeVec, const ReadPairSet_t * used){
 ////Output - None, modifies the edge object
 //void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
 //    //TODO FIXME
-//    //std::vector<Read_pt> toRemoveVec;
-//    //for(const Read_pt & read : edge.supportSet){
-//    //    std::array<Region_pt *,2> regArr = {&(edge.hostRegion),
-//    //                                        &(edge.virusRegion)};
-//    //    for(const Region_pt * reg_p : regArr){
-//    //        const StripedSmithWaterman::Alignment & aln =
-//    //            alnMap.at(SQPair_t(*reg_p,read));
-//    //        //sw_score_next_best has been co-opted to store the strand of the read's alignment
-//    //            //against the subject
-//    //        char queryStrand = (char) aln.sw_score_next_best;
-//    //        bool bRev = ((*reg_p)->strand != queryStrand);
-//    //        const std::string & readSeq = read->getSegment( (*reg_p)->isVirus,
-//    //                                                        bRev);
-//
-//    //        bool qLC = is_low_complexity(readSeq.c_str(),
-//    //                                    aln.query_begin,aln.query_end);
-//    //        bool rLC = is_low_complexity((*reg_p)->sequence.c_str(),
-//    //                                    aln.ref_begin,aln.ref_end);
-//    //        if(qLC || rLC){
-//    //            toRemoveVec.push_back(read);
-//    //            continue;
-//    //        }
-//    //        uint32_t lClipLen = (bam_cigar_opchr(aln.cigar.front()) == 'S') ? 
-//    //                                bam_cigar_oplen(aln.cigar.front()) : 0;
-//    //        uint32_t rClipLen = (bam_cigar_opchr(aln.cigar.back()) == 'S') ? 
-//    //                                bam_cigar_oplen(aln.cigar.back()) : 0;
-//    //        //Only the matching clip is comparable to the breakpoint 
-//    //        //        Left for virus, Right for host (based on all prior work
-//    //        //        to make sure that's how things are arranged)
-//    //        uint32_t clipLen = ((*reg_p)->isVirus) ? lClipLen : rClipLen;
-//    //        uint32_t offset = ((*reg_p)->isVirus) ? edge.virusOffset :
-//    //                                                edge.hostOffset;
-//    //        //At this point breakpoints were defined by alignments
-//    //        // :: no alignment to virus will start before the breakpoint
-//    //        // :: no alignment to host will end after the breakpoint
-//    //        uint32_t sMiss = (offset > size_t(aln.ref_begin)) ?
-//    //                           offset - aln.ref_begin : aln.ref_begin - offset;
-//    //        uint32_t eMiss = (offset > size_t(aln.ref_end)) ?
-//    //                           offset - aln.ref_end : aln.ref_end - offset;
-//    //        uint32_t miss = ((*reg_p)->isVirus) ? sMiss : eMiss;
-//    //        //If the read is clipped enough, but starts/ends too far
-//    //        //from the breakpoint it is wrongly clipped
-//    //        if(clipLen > size_t(Config.max_sc_dist) && miss > size_t(Config.max_sc_dist)){
-//    //            toRemoveVec.push_back(read);
-//    //            continue;
-//    //        }
-//    //    }
-//    //}
-//    //for(const Read_pt & read : toRemoveVec){
-//    //    edge.removeSupport(read);
-//    //}
+//    std::vector<Read_pt> toRemoveVec;
+//    for(const Read_pt & read : edge.supportSet){
+//        std::array<Region_pt *,2> regArr = {&(edge.hostRegion),
+//                                            &(edge.virusRegion)};
+//        for(const Region_pt * reg_p : regArr){
+//            const StripedSmithWaterman::Alignment & aln =
+//                alnMap.at(SQPair_t(*reg_p,read));
+//            //sw_score_next_best has been co-opted to store the strand of the read's alignment
+//                //against the subject
+//            char queryStrand = (char) aln.sw_score_next_best;
+//            bool bRev = ((*reg_p)->strand != queryStrand);
+//            const std::string & readSeq = read->getSegment( (*reg_p)->isVirus,
+//                                                            bRev);
+//            bool qLC = is_low_complexity(readSeq.c_str(),
+//                                        aln.query_begin,aln.query_end);
+//            bool rLC = is_low_complexity((*reg_p)->sequence.c_str(),
+//                                        aln.ref_begin,aln.ref_end);
+//            if(qLC || rLC){
+//                toRemoveVec.push_back(read);
+//                continue;
+//            }
+//            uint32_t lClipLen = (bam_cigar_opchr(aln.cigar.front()) == 'S') ? 
+//                                    bam_cigar_oplen(aln.cigar.front()) : 0;
+//            uint32_t rClipLen = (bam_cigar_opchr(aln.cigar.back()) == 'S') ? 
+//                                    bam_cigar_oplen(aln.cigar.back()) : 0;
+//            //Only the matching clip is comparable to the breakpoint 
+//            //        Left for virus, Right for host (based on all prior work
+//            //        to make sure that's how things are arranged)
+//            uint32_t clipLen = ((*reg_p)->isVirus) ? lClipLen : rClipLen;
+//            uint32_t offset = ((*reg_p)->isVirus) ? edge.virusOffset :
+//                                                    edge.hostOffset;
+//            //At this point breakpoints were defined by alignments
+//            // :: no alignment to virus will start before the breakpoint
+//            // :: no alignment to host will end after the breakpoint
+//            uint32_t sMiss = (offset > size_t(aln.ref_begin)) ?
+//                               offset - aln.ref_begin : aln.ref_begin - offset;
+//            uint32_t eMiss = (offset > size_t(aln.ref_end)) ?
+//                               offset - aln.ref_end : aln.ref_end - offset;
+//            uint32_t miss = ((*reg_p)->isVirus) ? sMiss : eMiss;
+//            //If the read is clipped enough, but starts/ends too far
+//            //from the breakpoint it is wrongly clipped
+//            if(clipLen > size_t(Config.max_sc_dist) && miss > size_t(Config.max_sc_dist)){
+//                toRemoveVec.push_back(read);
+//                continue;
+//            }
+//        }
+//    }
+//    for(const Read_pt & read : toRemoveVec){
+//        edge.removeSupport(read);
+//    }
 //}
 
 //Generic function for filtering a vector to only a given set of indexes
@@ -1601,12 +1611,11 @@ bool PassesEffectiveReadCount(  const Edge_t & edge,
 //         - an alignment map
 void ProcessEdge(int id,Edge_t & edge, const AlignmentMap_t & alnMap){
     //IdentifyEdgeBreakpoints(edge,alnMap);
+    DeduplicateEdge(edge,alnMap);
+    FilterHighInsertReads(edge,alnMap);
+    //FilterSuspiciousReads(edge,alnMap);
     //Explicit call to ensure the offsets are ready when needed
     edge.getOffsets();
-    DeduplicateEdge(edge,alnMap);
-    //TODO: FIXME SEGFAULT
-    //FilterHighInsertReads(edge,alnMap);
-    //FilterSuspiciousReads(edge,alnMap);
 }
 
 void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
