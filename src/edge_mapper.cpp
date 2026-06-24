@@ -50,7 +50,7 @@ bam_hdr_t* JointHeader;
 StripedSmithWaterman::Filter AlnFilter(true,true,30,32767);
 StripedSmithWaterman::Aligner Aligner(1,4,6,1,false);
 int32_t AlnMaskLen;
-bool ExploratoryDedupliction = false;
+bool ExploratoryDeduplication = false;
 
 static size_t MinimumReads = 4;
 static size_t SplitBonus = 1;
@@ -209,7 +209,7 @@ int main(int argc, const char* argv[]) {
     AlnMaskLen =  Config.read_len/2;
     //Set global variable across edges
     Edge_t::MinimumClipLen = Config.min_sc_size;
-    ExploratoryDedupliction = Config.explore;
+    ExploratoryDeduplication = Config.explore;
     Stats = parse_stats(stats_file_name);
     JointHeader = sam_hdr_read(sam_open(bam_file_name.c_str(),"r"));
     //## Raw Data
@@ -663,92 +663,55 @@ std::vector<uint32_t> ConstructJointModCigar(
 //         - an alignment map to inform the deduplication
 //Output - None, modifies the given object
 void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
-    typedef std::tuple<int32_t,double,ReadPair_pt> element_t;
-    std::unordered_multimap<int32_t,element_t> readInfoMap;
+    ////Tuple includes distal position on the other genome, the score, and the 
+    ////  associated read pair
+    //typedef std::tuple<int32_t,double,ReadPair_pt> element_t;
+    //std::unordered_multimap<int32_t,element_t> readInfoMap;
+    std::unordered_set<int32_t> hostPositionSet;
+    std::unordered_set<int32_t> virusPositionSet;
     ReadPairSet_t toRemoveSet;
+    typedef const std::pair<const ReadPair_pt,ReadPairAlnSummary_t>* rpp_pt;
+    std::vector<rpp_pt> supportVec;
     for( const auto & pair : edge.getSupportSummaryMap() ) {
-        const ReadPair_pt & frag = pair.first;
-        const ReadPairAlnSummary_t & summary = pair.second;
+        supportVec.push_back(&pair);
+    }
+    //Sort such that the highest scoring read pair comes first
+    std::sort(supportVec.begin(),supportVec.end(),
+            [](rpp_pt a, rpp_pt b) {
+                return a->second.score > b->second.score;
+            }
+        );
+    //Retain the first (highest scoring) read pair for any given pair of distal coordinates
+    //NOTE: there is a potential bug where the host distal and virus distal positions could be the same...
+    for( rpp_pt pair_ptr : supportVec ) {
+        const ReadPair_pt & frag = pair_ptr->first;
+        const ReadPairAlnSummary_t & summary = pair_ptr->second;
         int32_t hostDistal = (edge.hostRegion->opensLeft()) ?
                                 summary.hostRight : summary.hostLeft;
         int32_t virusDistal = (edge.virusRegion->opensLeft()) ?
                                 summary.virusRight : summary.virusLeft;
-        bool bSeenHuman = readInfoMap.count(hostDistal);
-        bool bSeenVirus = readInfoMap.count(virusDistal);
-        //TODO: Exploratory Depuplication where one end can be the same
-        if(bSeenHuman || bSeenVirus){
+        bool bSeenHuman = hostPositionSet.count(hostDistal);
+        bool bSeenVirus = virusPositionSet.count(virusDistal);
+        
+        //If Exploratory, then one end may be non-unique
+        //otherwise both must be unique
+        if( (!ExploratoryDeduplication && (bSeenHuman || bSeenVirus)) ||
+            (bSeenHuman && bSeenVirus) ) 
+        {
             //Fragment does not have two unique distal positions
-            //TODO: Try to Keep the highest scoring fragment
-            //  currently keeps the first fragment
             toRemoveSet.insert(frag);
             continue;
         } 
-        readInfoMap.insert(std::make_pair(hostDistal,
-                                element_t(virusDistal,summary.score,frag)));
-        readInfoMap.insert(std::make_pair(virusDistal,
-                                element_t(hostDistal,summary.score,frag)));
+        hostPositionSet.insert(hostDistal);
+        virusPositionSet.insert(virusDistal);
+        //readInfoMap.insert(std::make_pair(hostDistal,
+        //                        element_t(virusDistal,summary.score,frag)));
+        //readInfoMap.insert(std::make_pair(virusDistal,
+        //                        element_t(hostDistal,summary.score,frag)));
     }
     for(const auto & frag : toRemoveSet){
         edge.removeSupport(frag);
     }
-    //TODO: FixMe change in edge support type
-    //std::unordered_multimap<size_t,element_t> readInfoMap;
-    //std::vector<Read_pt> toRemoveVec;
-    //for(const ReadPair_pt & frag : edge.getSupport()){
-
-    //    SQPair_t hPair(edge.hostRegion,frag);
-    //    SQPair_t vPair(edge.virusRegion,frag);
-    //    const StripedSmithWaterman::Alignment & hAln = alnMap.at(hPair);
-    //    const StripedSmithWaterman::Alignment & vAln = alnMap.at(vPair);
-    //    JunctionInterval_t hJIV = ConstructJIV(edge.hostRegion->strand(),false,hAln);
-    //    JunctionInterval_t vJIV = ConstructJIV(edge.virusRegion->strand(),true,vAln);
-    //    //If two reads have the same distal ends of their alignment,
-    //    //  they are considered duplicates
-    //    bool bSeenHuman = readInfoMap.count(hJIV.distal) != 0;
-    //    bool bSeenVirus = readInfoMap.count(vJIV.distal) != 0;
-    //    if(bSeenHuman && bSeenVirus){ //Same Start and End - Def a duplicate
-    //        toRemoveVec.push_back(read);
-    //        continue;
-    //    }
-
-    //    //Need a modified cigar string
-    //    std::vector<uint32_t> modCigarVec = ConstructJointModCigar(
-    //                                        hAln,vAln,
-    //                                        size_t(hAln.ref_begin) != hJIV.distal,
-    //                                        size_t(vAln.ref_begin) != vJIV.proximal);
-    //    //Both eliminated, so its either host side or virus side
-    //    if(bSeenHuman || bSeenVirus){ // At least one end matches
-    //        bool bPass = true;
-    //        if(ExploratoryDedupliction){
-    //        	size_t oppPos = (bSeenHuman) ? hJIV.distal : vJIV.distal;
-    //        	bool bFromBack = (bSeenVirus);
-    //        	auto range = readInfoMap.equal_range(oppPos);
-    //        	for(auto it = range.first; it != range.second && bPass; it++){
-    //        	    const std::vector<uint32_t> & other = std::get<1>(it->second);
-    //        	    if(AreConsistentCigars(other,modCigarVec,bFromBack))
-    //        	        bPass = false;
-    //        	}
-    //        } else {
-    //            bPass = false;
-    //        }
-    //        if(!bPass){
-    //            toRemoveVec.push_back(read);
-    //            continue;
-    //        }
-    //    }
-    //    //Not a duplicate, add it to the multimap
-    //    readInfoMap.insert(std::make_pair(  hJIV.distal,
-    //                                        element_t({ vJIV.distal,
-    //                                                    modCigarVec,
-    //                                                    read})));
-    //    readInfoMap.insert(std::make_pair(  vJIV.distal,
-    //                                        element_t({ hJIV.distal,
-    //                                                    modCigarVec,
-    //                                                    read})));
-    //}
-    //for(const Read_pt & read : toRemoveVec){
-    //    edge.removeSupport(read);
-    //}
 }
 
 //Sets the characters of an output string to the appropriate characters
@@ -1400,6 +1363,7 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     //Add any new edges back in (these are already filtered)
     edgeVec.insert(edgeVec.end(),newEdges.begin(),newEdges.end());
     ////Process all edges
+    ///TODO
     ProcessEdges(edgeVec,alnMap);
     //Remove insufficiently supported Edges
     //Find the edges which are unique to a particular edge
