@@ -405,6 +405,7 @@ typedef std::unordered_map<ReadPair_pt,ReadPairAlnSummary_t> ReadPairAlnSummaryM
 
 //Object associating a pair of regions and the reads spanning the pair
 struct Edge_t {
+    //#TODO: Have support have a way to group duplicates together
     static size_t MinimumClipLen;
     public:
     long int id;
@@ -418,19 +419,28 @@ struct Edge_t {
     size_t virusOffset;
     size_t nSplit = 0;
     //double lastScore = -1;
-    double lastScore = -1;
+    double lastScore = 0;
+    double m_cachedScore = -1;
     public:
-    Edge_t() :  hostRegion(nullptr), virusRegion(nullptr), supportSet(),
-                hostOffset(0), virusOffset(0) {}
+    Edge_t() : Edge_t(nullptr,nullptr) {}
     //Edge_t(const std::string & regStr, const std::string & readStr);
     Edge_t(Region_pt hostReg, Region_pt virusReg) :
+            id(-1),
             hostRegion(hostReg), virusRegion(virusReg), supportSet(),
-            hostOffset(0), virusOffset(0) {}
+            supportAlnSummaryMap(), validOffsets(false),
+            hostOffset(0), virusOffset(0), nSplit(0), lastScore(0),
+            m_cachedScore(-1)
+    {}
     Edge_t(const Edge_t & other) :
+        id(other.id),
         hostRegion(other.hostRegion), virusRegion(other.virusRegion),
-        supportSet(other.supportSet), 
+        supportSet(other.supportSet),
+        supportAlnSummaryMap(other.supportAlnSummaryMap),
+        validOffsets(other.validOffsets),
         hostOffset(other.hostOffset), virusOffset(other.virusOffset), 
-        nSplit(other.nSplit) {}
+        nSplit(other.nSplit), lastScore(other.lastScore),
+        m_cachedScore(other.m_cachedScore)
+    {}
     public:
     const ReadPairSet_t & getSupport() const { return this->supportSet; }
     std::pair<size_t,size_t> getOffsets() {
@@ -442,14 +452,13 @@ struct Edge_t {
     }
     bool addSupport(const ReadPair_pt & frag, ReadPairAlnSummary_t summary) {
         auto res = this->supportSet.insert(frag);
-        if(res.second){
-            validOffsets = false;
-            if(summary.isSplit) nSplit++;
-            this->lastScore += summary.score;
-            this->supportAlnSummaryMap[frag] = summary;
-            return true;
-        }
-        return false;
+        if(!res.second){ return false; }
+        validOffsets = false;
+        if(summary.isSplit) nSplit++;
+        this->lastScore += summary.score;
+        this->supportAlnSummaryMap[frag] = summary;
+        m_cachedScore = -1;
+        return true;
     }
     bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t alnMap){
         return addSupport(frag,this->getRPAlnSummary(frag,alnMap));
@@ -558,10 +567,10 @@ struct Edge_t {
     double cachedScore(   const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used)
     {
-        return this->lastScore;
-        //if(this->lastScore == -1)
-        //    this->lastScore = this->score(alnMap,used);
-        //return this->lastScore;
+        if(this->m_cachedScore == -1) {
+            this->m_cachedScore = this->score(alnMap,used);
+        }
+        return this->m_cachedScore;
     }
     bool removeSupport(const ReadPair_pt & frag){
         //if(this->readSet.empty()) return false;
@@ -573,28 +582,31 @@ struct Edge_t {
         if(summary.isSplit && nSplit) nSplit--;
         this->lastScore -= summary.score;
         validOffsets = false;
+        m_cachedScore = -1;
         return true;
     }
-    //Retained for backwards compatibility
+    //alnMap Retained for backwards compatibility
     double score(   const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used) const
     {
-        return lastScore;
-        //double my_score = 0;
-        //for(const ReadPair_pt & frag : this->supportSet){
-        //    if(used.count(frag)) { continue; }
-        //    for ( bool checkR1 : {true, false} ){
-        //        for ( const Region_pt & curReg :
-        //                {this->hostRegion, this->virusRegion})
-        //        {
-        //            SQPair_t pair(curReg,frag->getRead(checkR1));
-        //            const StripedSmithWaterman::Alignment & aln =
-        //                alnMap.at(pair);
-        //            my_score += aln.sw_score;
-        //        }
-        //    }
-        //}
-        //return my_score;
+        if(used.empty()) { return lastScore; }
+        double my_score = 0;
+        for(const auto & pair: this->supportAlnSummaryMap ) {
+            const ReadPair_pt & frag = pair.first;
+            if(used.count(frag)) { continue; }
+            my_score += pair.second.score;
+            //for ( bool checkR1 : {true, false} ){
+            //    for ( const Region_pt & curReg :
+            //            {this->hostRegion, this->virusRegion})
+            //    {
+            //        SQPair_t pair(curReg,frag->getRead(checkR1));
+            //        const StripedSmithWaterman::Alignment & aln =
+            //            alnMap.at(pair);
+            //        my_score += aln.sw_score;
+            //    }
+            //}
+        }
+        return my_score;
     }
     //private:
     //void parseRegString(const std::string & regStr);
