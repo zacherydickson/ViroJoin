@@ -400,6 +400,9 @@ struct ReadPairAlnSummary_t {
     bool isSplit;
     double score;
     int32_t hostLeft, hostRight, virusLeft, virusRight;
+    int32_t calcIS() const {
+        return (hostRight - hostLeft) + (virusRight - virusLeft);
+    }
 };
 typedef std::unordered_map<ReadPair_pt,ReadPairAlnSummary_t> ReadPairAlnSummaryMap_t;
 
