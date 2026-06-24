@@ -264,9 +264,9 @@ int main(int argc, const char* argv[]) {
     //Note: Some of this effort could be performed during the loading step
     ////## Alignments 
     RemoveUnalignedReads(edgeVec,alnMap);
-    //TODO:
     ////## Edge Processing
     OrderEdges(edgeVec,alnMap);
+    //TODO:
     ////## Output
     //OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
     //            hostbp_file_name,virusbp_file_name);
@@ -845,66 +845,51 @@ void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
     }
 }
 
-////Remove reads that have suspicious alignments, alignments are considered
-////suspicious if:
-////  the aligned portion of the query or reference are low complexity
-////  a split read's aligned position is too far from the breakpoint
-////Inputs - an edge to process
-////         - an alignment map
-////Output - None, modifies the edge object
-//void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
-//    //TODO FIXME
-//    std::vector<Read_pt> toRemoveVec;
-//    for(const Read_pt & read : edge.supportSet){
-//        std::array<Region_pt *,2> regArr = {&(edge.hostRegion),
-//                                            &(edge.virusRegion)};
-//        for(const Region_pt * reg_p : regArr){
-//            const StripedSmithWaterman::Alignment & aln =
-//                alnMap.at(SQPair_t(*reg_p,read));
-//            //sw_score_next_best has been co-opted to store the strand of the read's alignment
-//                //against the subject
-//            char queryStrand = (char) aln.sw_score_next_best;
-//            bool bRev = ((*reg_p)->strand != queryStrand);
-//            const std::string & readSeq = read->getSegment( (*reg_p)->isVirus,
-//                                                            bRev);
-//            bool qLC = is_low_complexity(readSeq.c_str(),
-//                                        aln.query_begin,aln.query_end);
-//            bool rLC = is_low_complexity((*reg_p)->sequence.c_str(),
-//                                        aln.ref_begin,aln.ref_end);
-//            if(qLC || rLC){
-//                toRemoveVec.push_back(read);
-//                continue;
-//            }
-//            uint32_t lClipLen = (bam_cigar_opchr(aln.cigar.front()) == 'S') ? 
-//                                    bam_cigar_oplen(aln.cigar.front()) : 0;
-//            uint32_t rClipLen = (bam_cigar_opchr(aln.cigar.back()) == 'S') ? 
-//                                    bam_cigar_oplen(aln.cigar.back()) : 0;
-//            //Only the matching clip is comparable to the breakpoint 
-//            //        Left for virus, Right for host (based on all prior work
-//            //        to make sure that's how things are arranged)
-//            uint32_t clipLen = ((*reg_p)->isVirus) ? lClipLen : rClipLen;
-//            uint32_t offset = ((*reg_p)->isVirus) ? edge.virusOffset :
-//                                                    edge.hostOffset;
-//            //At this point breakpoints were defined by alignments
-//            // :: no alignment to virus will start before the breakpoint
-//            // :: no alignment to host will end after the breakpoint
-//            uint32_t sMiss = (offset > size_t(aln.ref_begin)) ?
-//                               offset - aln.ref_begin : aln.ref_begin - offset;
-//            uint32_t eMiss = (offset > size_t(aln.ref_end)) ?
-//                               offset - aln.ref_end : aln.ref_end - offset;
-//            uint32_t miss = ((*reg_p)->isVirus) ? sMiss : eMiss;
-//            //If the read is clipped enough, but starts/ends too far
-//            //from the breakpoint it is wrongly clipped
-//            if(clipLen > size_t(Config.max_sc_dist) && miss > size_t(Config.max_sc_dist)){
-//                toRemoveVec.push_back(read);
-//                continue;
-//            }
-//        }
-//    }
-//    for(const Read_pt & read : toRemoveVec){
-//        edge.removeSupport(read);
-//    }
-//}
+//Remove reads that have suspicious alignments, alignments are considered
+//suspicious if:
+//  a split read's aligned position is too far from the breakpoint
+//Inputs - an edge to process
+//         - an alignment map
+//Output - None, modifies the edge object
+void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
+    ReadPairSet_t toRemoveSet;
+    std::pair<size_t,size_t> offsets = edge.getOffsets();
+    for(const Region_pt & reg : {edge.hostRegion,edge.virusRegion}){
+        long int curOffset =  (reg == edge.hostRegion) ?
+                              offsets.first : offsets.second;
+        //Set the most distal acceptable clip position
+        for(const auto & pair : edge.getSupportSummaryMap()) {
+            const ReadPair_pt & frag = pair.first;
+            //Skip fragments excluded on the other side
+            if( toRemoveSet.count(frag) ) { continue; }
+            const ReadPairAlnSummary_t & summary = pair.second;
+            long int proxPos;
+            switch(reg->opensLeft() + 2 * reg->isViral()) {
+                case 0b00 : //HR
+                    proxPos = summary.hostRight;
+                    break;
+                case 0b01 : //HL
+                    proxPos = summary.hostLeft;
+                    break;
+                case 0b10 : //VR
+                    proxPos = summary.virusRight;
+                    break;
+                case 0b11 : //VL
+                    proxPos = summary.virusLeft;
+                    break;
+            }
+            //As the offset is defined as the most extreme position across frags,
+            // any individual fragment's proximal position will be at least as
+            // distal
+            if(std::abs(proxPos - curOffset) > Config.max_sc_dist){
+                toRemoveSet.insert(frag);
+            }
+        }
+    }
+    for(const ReadPair_pt & frag : toRemoveSet){
+        edge.removeSupport(frag);
+    }
+}
 
 //Generic function for filtering a vector to only a given set of indexes
 //Inputs - a vector to process
@@ -1373,7 +1358,6 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     //Add any new edges back in (these are already filtered)
     edgeVec.insert(edgeVec.end(),newEdges.begin(),newEdges.end());
     ////Process all edges
-    ///TODO
     ProcessEdges(edgeVec,alnMap);
     //Remove insufficiently supported Edges
     //Find the edges which are unique to a particular edge
@@ -1613,7 +1597,7 @@ void ProcessEdge(int id,Edge_t & edge, const AlignmentMap_t & alnMap){
     //IdentifyEdgeBreakpoints(edge,alnMap);
     DeduplicateEdge(edge,alnMap);
     FilterHighInsertReads(edge,alnMap);
-    //FilterSuspiciousReads(edge,alnMap);
+    FilterSuspiciousReads(edge,alnMap);
     //Explicit call to ensure the offsets are ready when needed
     edge.getOffsets();
 }
