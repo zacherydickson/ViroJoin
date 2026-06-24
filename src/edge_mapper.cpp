@@ -70,7 +70,7 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
 EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
                                 const AlignmentMap_t & alnMap);
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
-                        const Region_pt & mateSubject,
+                        const Region_pt & mateSubject, bool isSupplemental,
                         const AlignmentMap_t & alnMap,
                         bam1_t* entry);
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset);
@@ -130,18 +130,19 @@ RegionSet_t LoadRegions(const std::string jointRefFName,
 void LoadRegionSeq( const std::string & regionsFName,
                     Region2ReadsMap_t & reg2readSetMap,
                     Name2RegionMap_t & nameMap);
-void OutputEdge(const Edge_t & edge, const AlignmentMap_t & alnMap,
-                const std::string & resFName, const std::string & readDir,
-                const ReadPairSet_t & used);
+void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
+void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
+                std::ofstream & out);
+void OuputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
+                const std::string & readDir, const ReadPairSet_t & used);
 void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
                     const Edge_t & edge, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
-void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
-void OutputEdges(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
-                    const Name2ReadMap_t & readNameMap,
-                    const std::string & resFName, const std::string & readDir,
-                    const std::string & hostbpFName,
-                    const std::string & virusbpFName);
+//void OutputEdges(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
+//                    const Name2ReadMap_t & readNameMap,
+//                    const std::string & resFName, const std::string & readDir,
+//                    const std::string & hostbpFName,
+//                    const std::string & virusbpFName);
 void OutputEdgesByQ(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     const Name2ReadMap_t & readNameMap,
                     const std::string & resFName, const std::string & readDir,
@@ -268,11 +269,11 @@ int main(int argc, const char* argv[]) {
     OrderEdges(edgeVec,alnMap);
     //TODO:
     ////## Output
-    //OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
-    //            hostbp_file_name,virusbp_file_name);
+    OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
+                hostbp_file_name,virusbp_file_name);
     ////## Cleanup
-    //bam_hdr_destroy(JointHeader);
-    //fprintf(stderr,"edge_mapper Done\n");
+    bam_hdr_destroy(JointHeader);
+    fprintf(stderr,"edge_mapper Done\n");
 }
 
 //==== FUNCTION DEFINITIONS
@@ -450,61 +451,64 @@ EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
 
 
 
-////Given a read region pair, and alignment info, construct a bam entry for
-////the pair's alignment
-////Inputs - a read-region pair
-////         - an alignment Map
-////         - a bam1_t pointer to store the result in
-////Output - Boolean whether the construction was successful or not
-////         - Also modifes the entry object
-//bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
-//                        const Region_pt & mateSubject,
-//                        const AlignmentMap_t & alnMap,
-//                        bam1_t* entry)
-//{
-//    //TODO: FIXME:
-//    //const StripedSmithWaterman::Alignment & aln =
-//    //    alnMap.at(SQPair_t(subject,query));
-//    //const StripedSmithWaterman::Alignment & mateAln =
-//    //    alnMap.at(SQPair_t(mateSubject,query));
-//    //bool bVirus = (VirusNameSet.count(subject->chr));
-//    ////sw_score_next_best has been co-opted to store the strand of the read's alignment
-//    ////against the subject
-//    //char queryStrand = (char) aln.sw_score_next_best;
-//    //char mateStrand = (char) mateAln.sw_score_next_best;
-//    //bool bRev = (subject->strand != queryStrand);
-//    //uint16_t flag = BAM_FPAIRED;
-//    //if((bRev && subject->strand == '+') || (!bRev && subject->strand == '-')) flag |= BAM_FREVERSE;
-//    //bool mateBRev = (mateSubject->strand != mateStrand);
-//    //if((mateBRev && mateSubject->strand == '+') || (!mateBRev && mateSubject->strand == '-')) flag |= BAM_FMREVERSE;
-//    //flag |= ((bVirus) ? BAM_FREAD2 : BAM_FREAD1);
-//    //entry->core.qual = 255;
-//    //entry->core.l_extranul = (4 - (query->name.length() % 4)) % 4;
-//    //entry->core.l_qname = query->name.length() + entry->core.l_extranul;
-//    ////Note the sequence bRev argument
-//    //std::string qSeq = query->getSegment(bVirus,bRev);
-//    //int l_qseq = qSeq.length();
-//    //std::vector<char> qual(l_qseq,'<');
-//    //int l_aux = 0;
-//    //auto ql = bam_cigar2qlen(aln.cigar.size(),aln.cigar.data());
-//    //std::vector<uint32_t> cigar = aln.cigar;
-//    //hts_pos_t pos = subject->seqLeft + aln.ref_begin;
-//    //if(subject->strand == '-'){
-//    //    // Need to reverse the cigar string and the sequence
-//    //    // And adjust the position
-//    //    pos = subject->seqLeft + (subject->sequence.length() - aln.ref_end ) - 1;
-//    //    qSeq = query->getSegment(bVirus,!bRev);
-//    //    std::reverse(cigar.begin(),cigar.end());
-//    //}
-//    //if(l_qseq != ql) return false;
-//    //bam_set1(   entry,query->name.length(),query->name.c_str(), flag,
-//    //            sam_hdr_name2tid(JointHeader,subject->chr.c_str()),
-//    //            pos, 255, cigar.size(), cigar.data(),
-//    //            sam_hdr_name2tid(JointHeader,mateSubject->chr.c_str()),
-//    //            mateSubject->seqLeft + mateAln.ref_begin,
-//    //            0, l_qseq, qSeq.c_str(), qual.data(), l_aux);
-//    return true;
-//}
+//Given a read region pair, and alignment info, construct a bam entry for
+//the pair's alignment
+//Inputs - a read-region pair
+//         - an alignment Map
+//         - a bam1_t pointer to store the result in
+//Output - Boolean whether the construction was successful or not
+//         - Also modifes the entry object
+bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
+                        const Region_pt & mateSubject, bool isSupplemental,
+                        const AlignmentMap_t & alnMap,
+                        bam1_t* entry)
+{
+    const StripedSmithWaterman::Alignment & aln =
+        alnMap.at(SQPair_t(subject,query));
+    //sw_score_next_best has been co-opted to store whether the cannonical or non-cannonical representation of
+    //the read aligned against the subject
+    bool isCannonicalQuery = ((char) aln.sw_score_next_best == '+');
+    //bool bRev = subject.opensLeft();
+    //Information for all alignments
+    uint16_t flag = query->isR1 ? BAM_FREAD1 : BAM_FREAD2;
+    entry->core.qual = 255;
+    entry->core.l_extranul = (4 - (query->name.length() % 4)) % 4;
+    entry->core.l_qname = query->name.length() + entry->core.l_extranul;
+    std::string qSeq = query->seq.get(isCannonicalQuery);
+    int l_qseq = qSeq.length();
+    std::vector<char> qual(l_qseq,'<');
+    int l_aux = 0;
+    auto ql = bam_cigar2qlen(aln.cigar.size(),aln.cigar.data());
+    if(l_qseq != ql) return false;
+    std::vector<uint32_t> cigar = aln.cigar;
+    hts_pos_t pos = subject->offset + aln.ref_begin;
+    int32_t mtid = -1;
+    hts_pos_t mpos = -1;
+    hts_pos_t isize = 0;
+    //Extra info
+    if(isSupplemental){ // Basic info only
+        flag |= BAM_FSUPPLEMENTARY;
+        //Supplementary alignments point away from the junction
+        if(!subject->opensLeft()) {flag |= BAM_FREVERSE;}
+    } else { // Add Mate Information
+        flag |= BAM_FPAIRED;
+        //Primary Alignments point towards the junction
+        if(subject->opensLeft()) {flag |= BAM_FREVERSE;}
+        if(mateSubject->opensLeft()) {flag |= BAM_FMREVERSE;}
+        mtid = sam_hdr_name2tid(JointHeader,mateSubject->chromosome.c_str());
+        const StripedSmithWaterman::Alignment & mateAln =
+            alnMap.at(SQPair_t(mateSubject,query));
+        mpos = mateSubject->offset + mateAln.ref_begin;
+    }
+    bam_set1(   entry,
+                query->name.length(),query->name.c_str(),
+                flag, sam_hdr_name2tid(JointHeader,subject->chromosome.c_str()), pos, 255,
+                cigar.size(), cigar.data(),
+                mtid, mpos, isize,
+                l_qseq, qSeq.c_str(), qual.data(),
+                l_aux);
+    return true;
+}
 
 //Constructs a breakpoint from a known region
 //Inputs - an offset describing where in the region the offset is
@@ -1367,56 +1371,132 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     fprintf(stderr,"Ordered %zu edges\n",edgeVec.size());
 }
 
-//void OutputEdge(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-//                std::ofstream & out, const std::string & readDir,
-//                const ReadPairSet_t & used)
-//{
-//    //TODO:FIXME Change in edge support type
-//    ////Output the call
-//    //call_t call = ConstructCall(id, edge,alnMap);
-//    //out << call.to_string() << "\n"; 
-//    ////Output the reads
-//    //std::string fName = std::to_string(id)+".bam";
-//    //samFile* writer = open_bam_writer(        readDir,fName,
-//    //                                    JointHeader);
-//    //bam1_t* entry = bam_init1();
-//    //std::vector<bam1_t*> entryVec;
-//    //for(const ReadPair_pt & frag : edge.supportSet){
-//    //    if(used.count(frag)) continue;
-//    //    entryVec.push_back(bam_init1());
-//    //    bool bCons = ConstructBamEntry( read,edge.hostRegion,
-//    //                                    edge.virusRegion,alnMap,
-//    //                                    entryVec.back());
-//    //    if(!bCons) throw std::runtime_error("Cigar failure");
-//    //    entryVec.push_back(bam_init1());
-//    //    ConstructBamEntry(read,edge.virusRegion,edge.hostRegion,alnMap,
-//    //                      entryVec.back());
-//    //}
-//
-//    ////Sort the reads by position
-//    //std::sort(  entryVec.begin(),entryVec.end(),
-//    //            [] (bam1_t* & a, bam1_t* & b) {
-//    //                return compareBamByPos(a,b) == -1;
-//    //            });
-//
-//    ////Iterate over sorted entries and write them
-//    //for(bam1_t * & entry : entryVec){
-//    //    int ok = sam_write1(writer,JointHeader,entry);
-//    //    if(ok < 0) throw std::runtime_error("Failed to write to " +
-//    //                                        std::string(writer->fn));
-//    //    bam_destroy1(entry);
-//    //}
-//
-//    //bam_destroy1(entry);
-//    //sam_close(writer);
-//    //
-//    ////Construct an index for the bam file
-//    //std::string fullFName = readDir + '/' + fName;
-//    //int code = sam_index_build(fullFName.c_str(),0);
-//    //if( code != 0 ){
-//    //    throw std::runtime_error("Failed to index " + fullFName);
-//    //}
-//}
+void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
+                std::ofstream & out)
+{
+    //Output the call
+    //TODO:
+    call_t call = ConstructCall(id, edge,alnMap);
+    out << call.to_string() << "\n"; 
+}
+
+
+void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
+                const std::string & readDir, const ReadPairSet_t & used)
+{
+    //Output the reads
+    std::string fName = std::to_string(id)+".bam";
+    samFile* writer = open_bam_writer(readDir, fName, JointHeader);
+    std::vector<bam1_t*> entryVec;
+    for(const auto & pair : edge.getSupportSummaryMap()){
+        const ReadPair_pt & frag = pair.first;
+        if(used.count(frag)) continue;
+        const ReadPairAlnSummary_t & summary = pair.second;
+        int32_t hDistal = edge.hostRegion->opensLeft() ?
+            summary.hostRight : summary.hostLeft;
+        int32_t vDistal = edge.virusRegion->opensLeft() ?
+            summary.virusRight : summary.virusLeft;
+        //Boolean of whether a position in the alignment for the read matches
+        // the distal positions for the whole fragment
+        //bool bR1H = false, bR1V=false, bR2H = false, bR2V=false;
+        //0x8, 0x4, 0x2, 0x1
+        uint8_t flag = 0;
+        for(bool checkR1 : {true, false} ){
+            int shift = (checkR1) ? 2 : 0;
+            const Read_pt read = frag->getRead(checkR1);
+            for(const Region_pt & reg : {edge.hostRegion,edge.virusRegion}) {
+                SQPair_t sqp(reg,read);
+                if(!alnMap.count(sqp)){ continue; }
+                auto aln = alnMap.at(sqp);
+                if(reg->isViral()) { // virus region
+                    if(aln.ref_end == vDistal || aln.ref_begin == vDistal) {
+                        flag |= (1<<shift);
+                    }
+                } else { // host region
+                    if(aln.ref_end == hDistal || aln.ref_begin == hDistal) {
+                        flag |= (1<<(shift+1));
+                    }
+                }
+            }
+        }
+        //Order the regions usch that R1 will be primarily be against the first
+        // and R2 against the second
+        std::vector<Region_pt> regionOrder;
+        if( (flag & 0b0110) == 0b0110) { //R1 V primary, R2 H primary
+            regionOrder = {edge.virusRegion,edge.hostRegion};
+        } else if ( (flag & 0b1001) == 0b1001) { //R1 H primary, R2 V primary
+            regionOrder = {edge.hostRegion,edge.virusRegion};
+        } else { // Impossible cases of missing info or subsumed reads
+            throw std::runtime_error(   "Summary - Aln mismatch; case: " +
+                                        std::to_string(flag));
+        }
+        //switch (flag) {
+        //    // R1 V primary, R2 H primary
+        //    case 0b0110: // H222.|.111V
+        //    case 0b0111: // H333.|.111V
+        //    case 0b1110: // H333.|.111V
+        //        regionOrder = {edge.virusRegion,edge.hostRegion};
+        //        break;
+        //    // R2 V primary, R1 H primary
+        //    case 0b1001: // H111.|.222V
+        //    case 0b1011: // H333.|.222V
+        //    case 0b1101: // H111.|.333V
+        //    case 0b1111: // H333.|.333V //Arbitarilly put R1 H primary
+        //        regionOrder = {edge.hostRegion,edge.virusRegion,edge}
+        //        break;
+        //    default:
+        //        //!(flag & 0b1010) || !(flag & 0b0101) : the distal end in one region
+        //        // comes from neither read; Shouldn't happen
+        //        //!(flag & 0b1100) || !(flag & 0b0011) : Either R1 or R2 does
+        //        // not contribute to the distal ends. i.e wholly inside the other
+        //        // Shouldn't happen
+        //        throw std::runtime_error(   "Summary - Aln mismatch; case: " +
+        //                                    std::to_string(flag));
+        //}
+        for(bool checkR1 : {true, false} ){
+            const Read_pt read = frag->getRead(checkR1);
+            //The first region processed is the primary, all supsequent are supp
+            for(bool bSupplementary : {true,false} ){
+                //R1 takes the 0th for primary, and 1st for secondary
+                //R2 takes the 1st for primary, and 0th for secondary
+                bool regIdx = bSupplementary ? checkR1 : !checkR1;
+                const Region_pt & reg = regionOrder[regIdx];
+                SQPair_t sqp(reg,read);
+                //Skip unaligned reads
+                if(!alnMap.count(sqp)){ continue; }
+                const Region_pt & mateReg = regionOrder[!regIdx];
+                entryVec.push_back(bam_init1());
+                bool bCons = ConstructBamEntry( read,reg, mateReg,
+                                                bSupplementary, alnMap,
+                                                entryVec.back() );
+                if(!bCons) throw std::runtime_error("Cigar failure");
+            }
+        }
+    }
+
+    //Sort the reads by position
+    std::sort(  entryVec.begin(),entryVec.end(),
+                [] (bam1_t* & a, bam1_t* & b) {
+                    return compareBamByPos(a,b) == -1;
+                });
+
+    //Iterate over sorted entries and write them
+    for(bam1_t * & entry : entryVec){
+        int ok = sam_write1(writer,JointHeader,entry);
+        if(ok < 0) throw std::runtime_error("Failed to write to " +
+                                            std::string(writer->fn));
+        bam_destroy1(entry);
+    }
+
+    sam_close(writer);
+    
+    //Construct an index for the bam file
+    std::string fullFName = readDir + '/' + fName;
+    int code = sam_index_build(fullFName.c_str(),0);
+    if( code != 0 ){
+        throw std::runtime_error("Failed to index " + fullFName);
+    }
+}
 
 ////Constructs a consensus sequence for the edge and outputs the host and
 ////viral sides
@@ -1514,57 +1594,59 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
 //    fprintf(stderr,"\nOutput %d Edges...\n",nextJunctionID);
 //}
 
-////Proceeds from high confidence edges to low confidence edges, ensuring
-////each read is used exactly once
-////  The edges may be reordered as 
-////The output order is determined by constructing a queue from the reads
-////  using a branched queue structure
-////Inputs - a reference to a vector of edges sorted from most to
-////            least confident
-////         - a const reference to an alignment map
-////         - a string representing the results file
-////         - a string representing the reads directory 
-////Output - None, prints to outfile
-//void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
-//                    const Name2ReadMap_t & readNameMap,
-//                    const std::string & resFName, const std::string & readDir,
-//                    const std::string & hostbpFName,
-//                    const std::string & virusbpFName)
-//{
-//    fprintf(stderr,"Outputting Edges ensuring reads support only one edge...\n");
-//    ReadPairSet_t used;
-//    std::ofstream out(resFName);
-//    std::ofstream hbpOut(hostbpFName);
-//    std::ofstream vbpOut(virusbpFName);
-//    //Initialize the Edge Queue
-//    CBranchedEdgeQueue edgeQueue(&alnMap,&used);
-//    ConstructEdgeQueue(edgeVec,edgeQueue);
-//    //Pull Elements off the edge queue
-//    fprintf(stderr,"Processing Edge Queue...\n");
-//    int nextJunctionID = 0;
-//    size_t start = edgeQueue.queueSize();
-//    int pert = 0;
-//    while(!edgeQueue.empty()){
-//        const Edge_t & edge = edgeQueue.top();
-//        if(PassesEffectiveReadCount(edge,&used)){
-//            OutputEdge( nextJunctionID,edge,alnMap,out,readDir,
-//                        used);
-//            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
-//            nextJunctionID++;
-//            edgeQueue.pop();
-//        } else {
-//            //Eat the top edge and feed its reads to edges beneath it in
-//            //the queue
-//            edgeQueue.cannabalize();
-//        }
-//        double progress = (start - edgeQueue.queueSize()) / double(start);
-//        if(1000.0 * progress > pert){
-//            pert = 1000 * progress;
-//            fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
-//        }
-//    }
-//    fprintf(stderr,"\nOutput %d Edges...\n",nextJunctionID);
-//}
+//Proceeds from high confidence edges to low confidence edges, ensuring
+//each read is used exactly once
+//  The edges may be reordered as 
+//The output order is determined by constructing a queue from the reads
+//  using a branched queue structure
+//Inputs - a reference to a vector of edges sorted from most to
+//            least confident
+//         - a const reference to an alignment map
+//         - a string representing the results file
+//         - a string representing the reads directory 
+//Output - None, prints to outfile
+void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
+                    const Name2ReadMap_t & readNameMap,
+                    const std::string & resFName, const std::string & readDir,
+                    const std::string & hostbpFName,
+                    const std::string & virusbpFName)
+{
+    fprintf(stderr,"Outputting Edges ensuring reads support only one edge...\n");
+    ReadPairSet_t used;
+    std::ofstream out(resFName);
+    std::ofstream hbpOut(hostbpFName);
+    std::ofstream vbpOut(virusbpFName);
+    //Initialize the Edge Queue
+    CBranchedEdgeQueue edgeQueue(&alnMap,&used);
+    ConstructEdgeQueue(edgeVec,edgeQueue);
+    //Pull Elements off the edge queue
+    fprintf(stderr,"Processing Edge Queue...\n");
+    int nextJunctionID = 0;
+    size_t start = edgeQueue.queueSize();
+    int pert = 0;
+    while(!edgeQueue.empty()){
+        const Edge_t & edge = edgeQueue.top();
+        if(PassesEffectiveReadCount(edge,&used)){
+            //TODO:
+            OutputEdgeCall(nextJunctionID,edge,alnMap,out);
+            OutputEdgeReads(nextJunctionID,edge,alnMap,readDir,used);
+            //TODO:
+            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
+            nextJunctionID++;
+            edgeQueue.pop();
+        } else {
+            //Eat the top edge and feed its reads to edges beneath it in
+            //the queue
+            edgeQueue.cannabalize();
+        }
+        double progress = (start - edgeQueue.queueSize()) / double(start);
+        if(1000.0 * progress > pert){
+            pert = 1000 * progress;
+            fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
+        }
+    }
+    fprintf(stderr,"\nOutput %d Edges...\n",nextJunctionID);
+}
 
 //Given an edge reports wheteher it has enough effective reads
 //Inputs - an Edge
@@ -1575,12 +1657,17 @@ bool PassesEffectiveReadCount(  const Edge_t & edge,
     //size_t count = edge.supportSet.size() + ((edge.nSplit) ? SplitBonus : 0);
     double count = 0;
     bool bSplit = false;
-    for(const ReadPair_pt & frag : edge.getSupport()){
-        if(!used || !used->count(frag)){
-            double update = 1;
-            count += update;
-            if(edge.isSplit()) { bSplit = true; }
-        }
+    //null or empty used means we can take the edge at its word
+    if(!used || used->empty()){
+        count = edge.getSupport().size();
+        if(edge.isSplit()) { count += SplitBonus; }
+        return (count >= MinimumReads);
+    }
+    //Used Exists and is non-empty, we have to check the fragments
+    for(const auto & pair : edge.getSupportSummaryMap()){
+        if(used->count(pair.first)) { continue; }
+        count += 1.0;
+        if(pair.second.isSplit) {bSplit = true; }
     }
     if(bSplit) count += SplitBonus;
     return (count >= MinimumReads);
