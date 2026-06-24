@@ -1151,6 +1151,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
     while(edgeFile >> edgeID >> hostRegId >> virusRegId >> support) {
         edgeID2VecIdxMap[edgeID] = edgeVec.size();
         edgeVec.emplace_back(regMap.at(hostRegId),regMap.at(virusRegId));
+        edgeVec.back().id = edgeID;
     }
     std::ifstream feFile(feFName);
     std::string name;
@@ -1699,6 +1700,7 @@ EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec
         if(diffRate < MaxDiffRate) continue;
         if(!newEdge_p){
             newEdge_p = std::make_unique<Edge_t>(edge.hostRegion,edge.virusRegion);
+            newEdge_p->id = edge.id;
         }
         //Move the fragment to the new edge
         edge.transferSupport(rowLabelVec[a],*newEdge_p);
