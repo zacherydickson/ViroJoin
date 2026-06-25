@@ -241,7 +241,6 @@ int main(int argc, const char* argv[]) {
     RemoveUnalignedReads(edgeVec,alnMap);
     ////## Edge Processing
     OrderEdges(edgeVec,alnMap);
-    //TODO:
     ////## Output
     OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
                 hostbp_file_name,virusbp_file_name);
@@ -749,6 +748,7 @@ size_t FillStringFromAlignment( std::string & outseq,
                 break;
             case 'I': //Insertions are treated as internal soft clips
                 //TODO Check if insertions are handled properly
+                //FIXME: They are not
                 qpos += opLen;
                 break;
             case 'D':
@@ -1201,45 +1201,44 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
     }
 }
 
-////Constructs a consensus sequence for the edge and outputs the host and
-////viral sides
-////Inputs - an id for the junction
-////         - output file streams fro the host and virus
-////         - an edge to process
-////         - an alignment map
-////Output - None, writes sequences to the file streams
-//void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
-//                    const Edge_t & edge, const AlignmentMap_t & alnMap,
-//                    const ReadPairSet_t & used) 
-//{
-//    //TODO:FIXME Change in EdgeSupportType
-//    ////Build the Table of aligned sequences
-//    //std::vector<std::string> rowSeqVec;
-//    //std::vector<size_t> nFillVec;
-//    ////To track which rows are still be processed
-//    //for(const Read_pt & read : edge.supportSet){
-//    //    if(usedReads.count(read)) continue; //Ignore used reads
-//    //    nFillVec.push_back(0);
-//    //    rowSeqVec.push_back(GetAlignedSequence(        edge,read,alnMap,
-//    //                                            nFillVec.back()));
-//    //}
-//    //std::string consensus = GenerateConsensus(rowSeqVec);
-//    ////Split the consensus and strip of leading and trailing N's
-//    //std::regex rgx("^N+|N+$");
-//    //std::string hostSeq = std::regex_replace(
-//    //                        consensus.substr(0,edge.hostRegion->sequence.length()),
-//    //                        rgx,"");
-//    //std::string virusSeq = std::regex_replace(
-//    //                        consensus.substr(edge.virusRegion->sequence.length()),
-//    //                        rgx,"");
-//    ////TODO: Check if the R/L labels match expectation
-//    //char hostSuffix = (edge.hostRegion->opensLeft()) ? 'R' : 'L';
-//    //char virusSuffix = (edge.virusRegion->opensLeft()) ? 'R' : 'L';
-//    //hostOut << '>' << id << '_' << hostSuffix << '\n' <<
-//    //        hostSeq << '\n';
-//    //virusOut << '>' << id << '_' << virusSuffix << '\n' <<
-//    //        virusSeq << '\n';
-//}
+//Constructs a consensus sequence for the edge and outputs the host and
+//viral sides
+//Inputs - an id for the junction
+//         - output file streams fro the host and virus
+//         - an edge to process
+//         - an alignment map
+//Output - None, writes sequences to the file streams
+void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
+                    const Edge_t & edge, const AlignmentMap_t & alnMap,
+                    const ReadPairSet_t & used)
+{
+    //TODO: Test that the output is correct
+    //Build the Table of aligned sequences
+    std::vector<std::string> rowSeqVec;
+    std::vector<size_t> nFillVec;
+    //To track which rows are still be processed
+    for(const ReadPair_pt & frag : edge.getSupport()){
+        if(used.count(frag)) continue; //Ignore used reads
+        nFillVec.push_back(0);
+        rowSeqVec.push_back(GetAlignedSequence( edge,frag,alnMap,
+                                                nFillVec.back()));
+    }
+    std::string consensus = GenerateConsensus(rowSeqVec);
+    //Split the consensus and strip off leading and trailing N's
+    std::regex rgx("^N+|N+$");
+    std::string hostSeq = std::regex_replace(
+                            consensus.substr(0,edge.hostRegion->sequence.length()),
+                            rgx,"");
+    std::string virusSeq = std::regex_replace(
+                            consensus.substr(edge.virusRegion->sequence.length()),
+                            rgx,"");
+    char hostSuffix = (edge.hostRegion->opensLeft()) ? 'R' : 'L';
+    char virusSuffix = (edge.virusRegion->opensLeft()) ? 'R' : 'L';
+    hostOut << '>' << id << '_' << hostSuffix << '\n' <<
+            hostSeq << '\n';
+    virusOut << '>' << id << '_' << virusSuffix << '\n' <<
+            virusSeq << '\n';
+}
 
 //Proceeds from high confidence edges to low confidence edges, ensuring
 //each read is used exactly once
@@ -1276,8 +1275,7 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
         if(PassesEffectiveReadCount(edge,&used)){
             OutputEdgeCall(nextJunctionID,edge,alnMap,out);
             OutputEdgeReads(nextJunctionID,edge,alnMap,readDir,used);
-            //TODO:
-            //OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
+            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
             nextJunctionID++;
             edgeQueue.pop();
         } else {
