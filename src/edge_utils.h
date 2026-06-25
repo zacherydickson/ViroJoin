@@ -397,9 +397,16 @@ typedef std::unordered_map< SQPair_t,StripedSmithWaterman::Alignment,
 
 
 struct ReadPairAlnSummary_t {
+    ReadPairAlnSummary_t() :
+        isSplit(false) , hostScore(0.0), virusScore(0.0),
+        hostLeft(-1), hostRight(-1), virusLeft(-1), virusRight(-1),
+        hostQAlnBases(-1), virusQAlnBases(-1)
+    {}
     bool isSplit;
-    double score;
+    double hostScore, virusScore;
     int32_t hostLeft, hostRight, virusLeft, virusRight;
+    int32_t hostQAlnBases, virusQAlnBases;
+    double score() const { return hostScore + virusScore; }
     int32_t calcIS() const {
         return (hostRight - hostLeft) + (virusRight - virusLeft);
     }
@@ -450,6 +457,12 @@ struct Edge_t {
         return (validOffsets) ? std::make_pair(hostOffset,virusOffset) :
                                 determineOffsets();
     }
+    std::pair<size_t,size_t> getOffsets() const {
+        if(!validOffsets) {
+            throw std::logic_error("Call for const getOffsets prior to determineOffsets");
+        }
+        return std::make_pair(hostOffset,virusOffset);
+    }
     const ReadPairAlnSummaryMap_t & getSupportSummaryMap() const {
         return this->supportAlnSummaryMap;
     }
@@ -458,7 +471,7 @@ struct Edge_t {
         if(!res.second){ return false; }
         validOffsets = false;
         if(summary.isSplit) nSplit++;
-        this->lastScore += summary.score;
+        this->lastScore += summary.score();
         this->supportAlnSummaryMap[frag] = summary;
         m_cachedScore = -1;
         return true;
@@ -518,12 +531,14 @@ struct Edge_t {
     ReadPairAlnSummary_t getRPAlnSummary(   const ReadPair_pt & frag,
                                             const AlignmentMap_t alnMap)
     {
-        ReadPairAlnSummary_t summary = {false,0,-1,-1,-1,-1};
+        ReadPairAlnSummary_t summary;
         if(!this->hostRegion || !this->virusRegion) { return summary; }
         summary.hostLeft = this->hostRegion->sequence.length();
         summary.hostRight = 0;
         summary.virusLeft = this->virusRegion->sequence.length();
         summary.virusRight = 0;
+        summary.hostQAlnBases = 0;
+        summary.virusQAlnBases = 0;
         //Check each combination of Read vs Region and calculate the total score
         //  as well as whether the alignment is split
         for ( bool checkR1 : {true, false} ){
@@ -543,7 +558,10 @@ struct Edge_t {
                 {
                     splitCount++;
                 }
-                summary.score += aln.sw_score;
+                double * score_ptr =    (curReg->isViral()) ?
+                                        &(summary.virusScore) :
+                                        &(summary.hostScore);
+                *score_ptr += aln.sw_score;
                 //Get the left and right positions of the alignment,
                 // and update the overall positions for the pair
                 int32_t * left_ptr = (curReg == this->hostRegion) ?
@@ -554,6 +572,11 @@ struct Edge_t {
                                         &(summary.virusRight);
                 if(aln.ref_begin < *left_ptr) { *left_ptr = aln.ref_begin; } 
                 if(aln.ref_end > *right_ptr) { *right_ptr = aln.ref_end; } 
+                //Total the number of query bases mapped to each region
+                int32_t * qAlnBasesPtr =    curReg->isViral() ? 
+                                            &(summary.virusQAlnBases) :
+                                            &(summary.hostQAlnBases);
+                *qAlnBasesPtr += aln.query_end - aln.query_begin + 1;
             }
             //For a read to be split it must have a split alignment to both the
             // host and viral regions
@@ -583,7 +606,7 @@ struct Edge_t {
         ReadPairAlnSummary_t summary = this->supportAlnSummaryMap.at(frag);
         this->supportAlnSummaryMap.erase(frag);
         if(summary.isSplit && nSplit) nSplit--;
-        this->lastScore -= summary.score;
+        this->lastScore -= summary.score();
         validOffsets = false;
         m_cachedScore = -1;
         return true;
@@ -597,7 +620,7 @@ struct Edge_t {
         for(const auto & pair: this->supportAlnSummaryMap ) {
             const ReadPair_pt & frag = pair.first;
             if(used.count(frag)) { continue; }
-            my_score += pair.second.score;
+            my_score += pair.second.score();
             //for ( bool checkR1 : {true, false} ){
             //    for ( const Region_pt & curReg :
             //            {this->hostRegion, this->virusRegion})
