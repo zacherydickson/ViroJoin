@@ -536,10 +536,14 @@ template<typename T>
 inline T min(T a, T b, T c, T d) { return std::min(std::min(a,b), std::min(c,d)); }
 
 int compareBamByPos(bam1_t* & a, bam1_t* & b){
-    if(a->core.mtid != b->core.mtid){
-        return (a->core.mtid < b->core.mtid) ? -1 : 1;
+    if(a->core.tid != b->core.tid){
+        return (a->core.tid < b->core.tid) ? -1 : 1;
     } else if(a->core.pos != b->core.pos){
         return (a->core.pos < b->core.pos) ? -1 : 1;
+    } else if(a->core.mtid != b->core.mtid){
+        return (a->core.mtid < b->core.mtid) ? -1 : 1;
+    } else if(a->core.mpos != b->core.mpos){
+        return (a->core.mpos < b->core.mpos) ? -1 : 1;
     }
     return 0;
 }
