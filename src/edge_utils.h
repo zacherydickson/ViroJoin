@@ -397,15 +397,35 @@ typedef std::unordered_map< SQPair_t,StripedSmithWaterman::Alignment,
 
 
 struct ReadPairAlnSummary_t {
+    static const uint8_t R1_SHIFT=0;
+    static const uint8_t R2_SHIFT=2;
+    static const uint8_t HOST_SHIFT=0;
+    static const uint8_t VIRUS_SHIFT=1;
+    enum HAS_ALN_MASK_t {
+        HAS_NONE = 0x0,
+        HAS_R1_HOST = 0x1,
+        HAS_R1_VIRUS = HAS_R1_HOST << VIRUS_SHIFT,
+        HAS_R2_HOST = HAS_R1_HOST << R2_SHIFT,
+        HAS_R2_VIRUS = HAS_R2_HOST << VIRUS_SHIFT,
+        HAS_R1 = HAS_R1_HOST | HAS_R1_VIRUS,
+        HAS_R2 = HAS_R2_HOST | HAS_R2_VIRUS,
+        HAS_HOST = HAS_R1_HOST | HAS_R2_HOST,
+        HAS_VIRUS = HAS_R1_VIRUS | HAS_R2_VIRUS
+    };
     ReadPairAlnSummary_t() :
         isSplit(false) , hostScore(0.0), virusScore(0.0),
         hostLeft(-1), hostRight(-1), virusLeft(-1), virusRight(-1),
-        hostQAlnBases(-1), virusQAlnBases(-1)
+        hostDistal(-1), hostProximal(-1), virusDistal(-1), virusProximal(-1),
+        hostQAlnBases(-1), virusQAlnBases(-1), hasAlnFlag(HAS_NONE),
+        distalContribFlag(HAS_NONE)
     {}
     bool isSplit;
     double hostScore, virusScore;
     int32_t hostLeft, hostRight, virusLeft, virusRight;
+    int32_t hostDistal, hostProximal, virusDistal, virusProximal;
     int32_t hostQAlnBases, virusQAlnBases;
+    uint8_t hasAlnFlag;
+    uint8_t distalContribFlag;
     double score() const { return hostScore + virusScore; }
     int32_t calcIS() const {
         return (hostRight - hostLeft) + (virusRight - virusLeft);
@@ -496,6 +516,15 @@ struct Edge_t {
         }
         return retVal;
     }
+    static bool AlignmentIsSplit(   bool opensLeft,
+                                    const StripedSmithWaterman::Alignment & aln)
+    {
+        int opIdx = opensLeft ? 0 : aln.cigar.size()-1;
+        uint32_t c = aln.cigar[opIdx];
+        return  (cigar_int_to_op(c) == 'S') &&
+                (cigar_int_to_len(c) >= Edge_t::MinimumClipLen);
+    }
+
     protected:
     //Iterates over supporting fragments and identifies the most junction proximal
     //  position observed; This is cached for the future;
@@ -549,39 +578,75 @@ struct Edge_t {
                 SQPair_t pair(curReg,frag->getRead(checkR1));
                 //Skip read-region pairs with no alignment
                 if(!alnMap.count(pair)) { continue; }
+                uint8_t mateShift = checkR1 ?
+                                    ReadPairAlnSummary_t::R1_SHIFT :
+                                    ReadPairAlnSummary_t::R2_SHIFT;
+                uint8_t regShift =  curReg->isViral() ?
+                                    ReadPairAlnSummary_t::VIRUS_SHIFT :
+                                    ReadPairAlnSummary_t::HOST_SHIFT;
+                summary.hasAlnFlag |= (1 << (mateShift + regShift));
                 const StripedSmithWaterman::Alignment & aln =
                     alnMap.at(pair);
-                int opIdx = curReg->opensLeft() ? 0 : aln.cigar.size()-1;
-                uint32_t c = aln.cigar[opIdx];
-                if( cigar_int_to_op(c) == 'S' &&
-                    cigar_int_to_len(c) >= Edge_t::MinimumClipLen)
-                {
+                if(Edge_t::AlignmentIsSplit(curReg->opensLeft(),aln)){
                     splitCount++;
                 }
-                double * score_ptr =    (curReg->isViral()) ?
-                                        &(summary.virusScore) :
-                                        &(summary.hostScore);
+                //Default set the value to update to the host value;
+                double * score_ptr = &summary.hostScore;
+                int32_t * left_ptr = &summary.hostLeft;
+                int32_t * right_ptr = &summary.hostRight;
+                int32_t * qAlnBasesPtr = &summary.hostQAlnBases;
+                //switch to viral if necessary;
+                if(curReg->isViral()) {
+                    score_ptr = &summary.virusScore;
+                    left_ptr = &summary.virusLeft;
+                    right_ptr = &summary.virusRight;
+                    qAlnBasesPtr = &summary.virusQAlnBases;
+                }
+                //Update the summary values
                 *score_ptr += aln.sw_score;
-                //Get the left and right positions of the alignment,
-                // and update the overall positions for the pair
-                int32_t * left_ptr = (curReg == this->hostRegion) ?
-                                        &(summary.hostLeft) :
-                                        &(summary.virusLeft);
-                int32_t * right_ptr = (curReg == this->virusRegion) ?
-                                        &(summary.hostRight) :
-                                        &(summary.virusRight);
                 if(aln.ref_begin < *left_ptr) { *left_ptr = aln.ref_begin; } 
                 if(aln.ref_end > *right_ptr) { *right_ptr = aln.ref_end; } 
-                //Total the number of query bases mapped to each region
-                int32_t * qAlnBasesPtr =    curReg->isViral() ? 
-                                            &(summary.virusQAlnBases) :
-                                            &(summary.hostQAlnBases);
                 *qAlnBasesPtr += aln.query_end - aln.query_begin + 1;
             }
             //For a read to be split it must have a split alignment to both the
             // host and viral regions
             if(splitCount == 2) {
                 summary.isSplit = true;
+            }
+        }
+        //Set the distal and proximal positions
+        summary.hostDistal = summary.hostLeft;
+        summary.hostProximal = summary.hostRight;
+        if(this->hostRegion->opensLeft()) {
+            std::swap(summary.hostDistal,summary.hostProximal);
+        }
+        summary.virusDistal = summary.virusLeft;
+        summary.virusProximal = summary.virusRight;
+        if(this->virusRegion->opensLeft()) {
+            std::swap(summary.virusDistal,summary.virusProximal);
+        }
+        //Second pass to determine which reads contribute to the distal positions
+        for ( bool checkR1 : {true, false} ){
+            uint8_t mateShift = (checkR1) ?
+                                ReadPairAlnSummary_t::R1_SHIFT :
+                                ReadPairAlnSummary_t::R2_SHIFT;
+            for ( const Region_pt & curReg :
+                    {this->hostRegion, this->virusRegion})
+            {
+                SQPair_t pair(curReg,frag->getRead(checkR1));
+                //Skip read-region pairs with no alignment
+                if(!alnMap.count(pair)) { continue; }
+                const StripedSmithWaterman::Alignment & aln =
+                    alnMap.at(pair);
+                int32_t * distal_ptr =  &summary.hostDistal;
+                uint8_t regShift = ReadPairAlnSummary_t::HOST_SHIFT;
+                if(curReg->isViral())  {
+                    distal_ptr = &summary.virusDistal;
+                    regShift = ReadPairAlnSummary_t::VIRUS_SHIFT;
+                }
+                if(aln.ref_begin == *distal_ptr || aln.ref_end == *distal_ptr) {
+                    summary.distalContribFlag |= (1 << (mateShift + regShift));
+                }
             }
         }
         return summary;
