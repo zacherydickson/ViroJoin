@@ -540,10 +540,17 @@ int compareBamByPos(bam1_t* & a, bam1_t* & b){
         return (a->core.tid < b->core.tid) ? -1 : 1;
     } else if(a->core.pos != b->core.pos){
         return (a->core.pos < b->core.pos) ? -1 : 1;
+    } else if(  (a->core.flag & BAM_FSUPPLEMENTARY) !=
+                (b->core.flag & BAM_FSUPPLEMENTARY) )
+    {
+        return (a->core.flag & BAM_FSUPPLEMENTARY) ? 1 : -1;
     } else if(a->core.mtid != b->core.mtid){
         return (a->core.mtid < b->core.mtid) ? -1 : 1;
     } else if(a->core.mpos != b->core.mpos){
         return (a->core.mpos < b->core.mpos) ? -1 : 1;
+    } else if(std::string(bam_get_qname(a)) != std::string(bam_get_qname(b))) {
+        return  std::string(bam_get_qname(a)) <  std::string(bam_get_qname(b)) ?
+                -1 : 1;
     }
     return 0;
 }
