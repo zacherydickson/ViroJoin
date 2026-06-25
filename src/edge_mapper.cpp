@@ -494,11 +494,16 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
         flag |= BAM_FPAIRED;
         //Primary Alignments point towards the junction
         if(subject->opensLeft()) {flag |= BAM_FREVERSE;}
-        if(mateSubject->opensLeft()) {flag |= BAM_FMREVERSE;}
-        mtid = sam_hdr_name2tid(JointHeader,mateSubject->chromosome.c_str());
-        const StripedSmithWaterman::Alignment & mateAln =
-            alnMap.at(SQPair_t(mateSubject,query));
-        mpos = mateSubject->offset + mateAln.ref_begin;
+        SQPair_t msqp(mateSubject,query);
+        if(alnMap.count(msqp)){
+            if(mateSubject->opensLeft()) {flag |= BAM_FMREVERSE;}
+            mtid = sam_hdr_name2tid(JointHeader,mateSubject->chromosome.c_str());
+            const StripedSmithWaterman::Alignment & mateAln = alnMap.at(msqp);
+            mpos = mateSubject->offset + mateAln.ref_begin;
+        } else {
+            //A primary alignment's mate SHOULD have a primary alignment
+            //FIXME:
+        }
     }
     bam_set1(   entry,
                 query->name.length(),query->name.c_str(),
@@ -515,60 +520,55 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
 //         - a region
 //Output - a breakpoint_t object (see util.h)
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset){
-    bool bRev = (reg->strand() == '-');
-    int pos = (!bRev) ? reg->offset + offset : reg->end - offset;
+    //HL -, HR +, VL +, VR -
+    bool bRev = (reg->opensLeft() != reg->isViral());
+    int pos = reg->offset + offset;
     return breakpoint_t(reg->chromosome,pos,pos,bRev);
 }
 
-////Given an edge and alignment information, calculates summary stats
-////  hostPBS - the average score/aligned base on the host side
-////  coverage - the half the total length of the host and virus sides as a
-////                proportion of the max insert size
-////Then constructs a call_t objects which can be output
-////Inputs - an identifier for the output junction
-////         - an edge object
-////         - an alignment map
-////Output - a call_t object (see utils.h)
-//call_t ConstructCall(        int id, const Edge_t & edge,
-//                        const AlignmentMap_t & alnMap)
-//{
-//    size_t nReads = edge.getSupport().size();
-//    breakpoint_t hostBP = ConstructBreakpoint(        edge.hostRegion,
-//                                                edge.hostOffset);
-//    breakpoint_t virusBP = ConstructBreakpoint(        edge.virusRegion,
-//                                                edge.virusOffset);
-//    double hostPBS = 0, virusPBS = 0;
-//    double hostCov = 0, virusCov = 0;
-//    size_t hostLeft = edge.hostRegion->sequence.length(), hostRight = 0;
-//    size_t virusLeft = edge.virusRegion->sequence.length(), virusRight = 0;
-//    int score = 0;
-//    //TODO::FIXME Change in edge support type
-//    //for( const ReadPair_pt & frag : edge.supportSet){
-//    //    SQPair_t hPair(edge.hostRegion,read);
-//    //    SQPair_t vPair(edge.virusRegion,read);
-//    //    const StripedSmithWaterman::Alignment & hAln = alnMap.at(hPair);
-//    //    const StripedSmithWaterman::Alignment & vAln = alnMap.at(vPair);
-//    //    if(size_t(hAln.ref_begin) < hostLeft) hostLeft = hAln.ref_begin;
-//    //    if(size_t(vAln.ref_begin) < virusLeft) virusLeft = vAln.ref_begin;
-//    //    if(size_t(hAln.ref_end) > hostRight) hostRight = hAln.ref_end;
-//    //    if(size_t(vAln.ref_end) > virusRight) virusRight = vAln.ref_end;
-//    //    double hLen = hAln.query_end - hAln.query_begin + 1;
-//    //    double vLen = vAln.query_end - vAln.query_begin + 1;
-//    //    hostPBS += double(hAln.sw_score) / hLen;
-//    //    virusPBS += double(vAln.sw_score) / vLen;
-//    //    score += hAln.sw_score + vAln.sw_score;
-//    //}
-//    hostPBS /= double(nReads);
-//    virusPBS /= double(nReads);
-//    if(hostLeft <= hostRight) {
-//        hostCov = double(hostRight - hostLeft) / (Stats.max_is - MinimumAlignmentLength);
-//    }
-//    if(virusLeft <= virusRight) {
-//        virusCov = double(virusRight - virusLeft) / Stats.max_is;
-//    }
-//    return call_t(id,hostBP,virusBP,nReads,nReads,edge.splitCount(),0,0,
-//            score,hostPBS,virusPBS,hostCov,virusCov);
-//}
+//Given an edge and alignment information, calculates summary stats
+//  hostPBS - the average score/aligned base on the host side
+//  coverage - the half the total length of the host and virus sides as a
+//                proportion of the max insert size
+//Then constructs a call_t objects which can be output
+//Inputs - an identifier for the output junction
+//         - an edge object
+//         - an alignment map
+//Output - a call_t object (see utils.h)
+call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
+{
+    size_t nReads = edge.getSupport().size();
+    std::pair<size_t,size_t> offsets = edge.getOffsets();
+    breakpoint_t hostBP = ConstructBreakpoint(edge.hostRegion,offsets.first);
+    breakpoint_t virusBP = ConstructBreakpoint(edge.virusRegion,offsets.second);
+    double hostPBS = 0, virusPBS = 0;
+    double hostCov = 0, virusCov = 0;
+    int32_t hostLeft = edge.hostRegion->sequence.length(), hostRight = 0;
+    int32_t virusLeft = edge.virusRegion->sequence.length(), virusRight = 0;
+    int score = 0;
+    for(const auto & pair : edge.getSupportSummaryMap()){
+        const ReadPairAlnSummary_t & summary = pair.second;
+        if(summary.hostLeft < hostLeft) { hostLeft = summary.hostLeft; }
+        if(summary.hostRight > hostRight) { hostRight = summary.hostRight; }
+        if(summary.virusLeft < virusLeft) { virusLeft = summary.virusLeft; }
+        if(summary.virusRight > virusRight) { virusRight = summary.virusRight; }
+        double hLen = summary.hostQAlnBases;
+        double vLen = summary.virusQAlnBases;
+        hostPBS += double(summary.hostScore) / hLen;
+        virusPBS += double(summary.virusScore) / vLen;
+        score += summary.score();
+    }
+    hostPBS /= double(nReads);
+    virusPBS /= double(nReads);
+    if(hostLeft <= hostRight) {
+        hostCov = double(hostRight - hostLeft) / (Stats.max_is - MinimumAlignmentLength);
+    }
+    if(virusLeft <= virusRight) {
+        virusCov = double(virusRight - virusLeft) / (Stats.max_is - MinimumAlignmentLength);
+    }
+    return call_t(id,hostBP,virusBP,nReads,nReads,edge.splitCount(),0,0,
+            score,hostPBS,virusPBS,hostCov,virusCov);
+}
 
 //Takes a vector of edges and copies them into a branched edge queue
 //Which stores the edges and their reads in such a way that the top of
@@ -707,7 +707,7 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
     //Sort such that the highest scoring read pair comes first
     std::sort(supportVec.begin(),supportVec.end(),
             [](rpp_pt a, rpp_pt b) {
-                return a->second.score > b->second.score;
+                return a->second.score() > b->second.score();
             }
         );
     //Retain the first (highest scoring) read pair for any given pair of distal coordinates
@@ -1474,6 +1474,7 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
         }
     }
 
+
     //Sort the reads by position
     std::sort(  entryVec.begin(),entryVec.end(),
                 [] (bam1_t* & a, bam1_t* & b) {
@@ -1627,11 +1628,10 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
     while(!edgeQueue.empty()){
         const Edge_t & edge = edgeQueue.top();
         if(PassesEffectiveReadCount(edge,&used)){
-            //TODO:
             OutputEdgeCall(nextJunctionID,edge,alnMap,out);
             OutputEdgeReads(nextJunctionID,edge,alnMap,readDir,used);
             //TODO:
-            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
+            //OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
             nextJunctionID++;
             edgeQueue.pop();
         } else {
