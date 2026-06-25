@@ -22,13 +22,9 @@
 
 //==== TYPE DECLARATIONS
 
-//Read_t, Edge_t, Region_t, SQPair_t
+//Read_t, Edge_t, Region_t, SQPair_t, ReadPair_t, ReadPairAlnSummary_t
 //As well as vectors, pointers, maps, and sets of these types are defined in 
 //edge_utils.h
-
-//struct JunctionInterval_t {
-//    size_t proximal, distal;
-//};
 
 struct RRLabelAssoc_t {
     std::string readName;
@@ -70,7 +66,8 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
 EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
                                 const AlignmentMap_t & alnMap);
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
-                        const Region_pt & mateSubject, bool isSupplemental,
+                        bool isSupplemental,
+                        const Read_pt & mate, const Region_pt & mateSubject, 
                         const AlignmentMap_t & alnMap,
                         bam1_t* entry);
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset);
@@ -80,10 +77,10 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
                         CBranchedEdgeQueue & edgeQueue);
 //JunctionInterval_t ConstructJIV(char strand, bool isVirus,
 //                                const StripedSmithWaterman::Alignment & aln);
-std::vector<uint32_t> ConstructJointModCigar(
-    const StripedSmithWaterman::Alignment & hAln,
-    const StripedSmithWaterman::Alignment & vAln,
-    bool bHRev, bool bVRev);
+//std::vector<uint32_t> ConstructJointModCigar(
+//    const StripedSmithWaterman::Alignment & hAln,
+//    const StripedSmithWaterman::Alignment & vAln,
+//    bool bHRev, bool bVRev);
 void DeduplicateEdge(Edge_t & edge,const AlignmentMap_t & alnMap);
 size_t FillStringFromAlignment( std::string & outseq,
                                 const std::string & inseq,
@@ -99,29 +96,11 @@ std::string GenerateConsensus(const std::vector<std::string> & rowVec,
                                 std::vector<size_t> * diffVec = nullptr);
 std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
                                 const AlignmentMap_t & alnMap, size_t & nFill);
-//void IdentifyEdgeBreakpoints(Edge_t & edge, const AlignmentMap_t & alnMap);
-//void IdentifyEdgeSpecificReads(EdgeVec_t & edgeVec);
 bool IsConsistent(const std::string & seq1, const std::string & seq2);
-void LoadData(  const std::string & edgeFName,
-                const std::string & regionsFName,
-                const std::string & readsFName,
-                Read2RegionsMap_t & read2regSetMap,
-                Region2ReadsMap_t & reg2readSetMap,
-                Name2ReadMap_t & readNameMap,
-                EdgeVec_t & edgeVec);
 EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
                     const Name2ReadPairMap_t & rpMap,
                     const RegID2RegionMap_t & regMap,
                     const AlignmentMap_t & alnMap);
-//void LoadEdges( std::string edgeFName,
-//                Read2RegionsMap_t & read2regSetMap, 
-//                Region2ReadsMap_t & reg2readSetMap,
-//                EdgeVec_t & edgeVec,
-//                const Name2ReadMap_t & readNameMap,
-//                const Name2RegionMap_t & regionNameMap);
-void LoadReadSeq(   const std::string & readsFName,
-                    Read2RegionsMap_t & read2regSetMap,
-                    Name2ReadMap_t & nameMap);
 std::vector<RRLabelAssoc_t> LoadReadRegionAssoc(const std::string & rrFName);
 ReadSet_t LoadReads(const std::string & bamFName,
                     const std::unordered_set<std::string> * readNames = nullptr);
@@ -138,11 +117,6 @@ void OuputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
 void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
                     const Edge_t & edge, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
-//void OutputEdges(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
-//                    const Name2ReadMap_t & readNameMap,
-//                    const std::string & resFName, const std::string & readDir,
-//                    const std::string & hostbpFName,
-//                    const std::string & virusbpFName);
 void OutputEdgesByQ(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     const Name2ReadMap_t & readNameMap,
                     const std::string & resFName, const std::string & readDir,
@@ -459,7 +433,8 @@ EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
 //Output - Boolean whether the construction was successful or not
 //         - Also modifes the entry object
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
-                        const Region_pt & mateSubject, bool isSupplemental,
+                        bool isSupplemental,
+                        const Read_pt & mate, const Region_pt & mateSubject,
                         const AlignmentMap_t & alnMap,
                         bam1_t* entry)
 {
@@ -491,18 +466,18 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
         //Supplementary alignments point away from the junction
         if(!subject->opensLeft()) {flag |= BAM_FREVERSE;}
     } else { // Add Mate Information
-        flag |= BAM_FPAIRED;
         //Primary Alignments point towards the junction
         if(subject->opensLeft()) {flag |= BAM_FREVERSE;}
-        SQPair_t msqp(mateSubject,query);
+        SQPair_t msqp(mateSubject,mate);
         if(alnMap.count(msqp)){
+            flag |= BAM_FPAIRED;
             if(mateSubject->opensLeft()) {flag |= BAM_FMREVERSE;}
             mtid = sam_hdr_name2tid(JointHeader,mateSubject->chromosome.c_str());
             const StripedSmithWaterman::Alignment & mateAln = alnMap.at(msqp);
             mpos = mateSubject->offset + mateAln.ref_begin;
         } else {
             //A primary alignment's mate SHOULD have a primary alignment
-            //FIXME:
+            throw std::runtime_error("Missing primary mate aln");
         }
     }
     bam_set1(   entry,
@@ -522,7 +497,7 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset){
     //HL -, HR +, VL +, VR -
     bool bRev = (reg->opensLeft() != reg->isViral());
-    int pos = reg->offset + offset;
+    int pos = reg->offset + offset + 1;
     return breakpoint_t(reg->chromosome,pos,pos,bRev);
 }
 
@@ -631,57 +606,57 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
 //    return jIV;
 //}
 
-//Construct the joint cigar vector of the host and virus side in
-//the order of human then virus, the proximal soft clip is
-//truncated to a length of 1
-//Input - an alignment to the host side
-//      - an alignment to the virus side
-//      - a boolean of whether the host alignment is arranged distal-proximal
-//      - a boolean of whether the virus alignment is arranged proximal-distal
-//Output - a vecotr of cigar ops
-std::vector<uint32_t> ConstructJointModCigar(
-    const StripedSmithWaterman::Alignment & hAln,
-    const StripedSmithWaterman::Alignment & vAln,
-    bool bHRev, bool bVRev)
-{
-    std::vector<uint32_t> opVec = hAln.cigar;
-    std::vector<uint32_t> vOpVec = vAln.cigar;
-    if(bHRev){
-        std::reverse(opVec.begin(),opVec.end());
-    }
-    if(bam_cigar_opchr(opVec.back()) == 'S'){
-        opVec.back() = bam_cigar_gen(1,'S');
-    }
-    if(bVRev){
-        std::reverse(vOpVec.begin(),vOpVec.end());
-    }
-    if(bam_cigar_opchr(vOpVec.front()) == 'S'){
-        vOpVec.front() = bam_cigar_gen(1,'S');
-    }
-    //Append the virus cigar vector
-    opVec.insert(opVec.end(),vOpVec.begin(),vOpVec.end());
-    //Convert match/mismatch (X/=) to aligned(M)
-    for(auto it = opVec.begin(); it != opVec.end();it++){
-        char opChr = bam_cigar_opchr(*it);
-        if(opChr == '=' || opChr == 'X'){
-            *it = bam_cigar_gen(bam_cigar_oplen(*it),'M');
-        }
-    }
-    //Collapse together consecutive align ops
-    for(auto it = opVec.begin(),nx=std::next(it); nx != opVec.end();){
-        char opChr = bam_cigar_opchr(*it);
-        char nextOpChr = bam_cigar_opchr(*nx);
-        if(opChr == nextOpChr && opChr == 'M'){
-            *it = bam_cigar_gen(bam_cigar_oplen(*it)+bam_cigar_oplen(*(it+1)),
-                                'M');
-            nx = opVec.erase(nx);
-        } else {
-            it = nx;
-            nx++;
-        }
-    }
-    return opVec;
-}
+////Construct the joint cigar vector of the host and virus side in
+////the order of human then virus, the proximal soft clip is
+////truncated to a length of 1
+////Input - an alignment to the host side
+////      - an alignment to the virus side
+////      - a boolean of whether the host alignment is arranged distal-proximal
+////      - a boolean of whether the virus alignment is arranged proximal-distal
+////Output - a vecotr of cigar ops
+//std::vector<uint32_t> ConstructJointModCigar(
+//    const StripedSmithWaterman::Alignment & hAln,
+//    const StripedSmithWaterman::Alignment & vAln,
+//    bool bHRev, bool bVRev)
+//{
+//    std::vector<uint32_t> opVec = hAln.cigar;
+//    std::vector<uint32_t> vOpVec = vAln.cigar;
+//    if(bHRev){
+//        std::reverse(opVec.begin(),opVec.end());
+//    }
+//    if(bam_cigar_opchr(opVec.back()) == 'S'){
+//        opVec.back() = bam_cigar_gen(1,'S');
+//    }
+//    if(bVRev){
+//        std::reverse(vOpVec.begin(),vOpVec.end());
+//    }
+//    if(bam_cigar_opchr(vOpVec.front()) == 'S'){
+//        vOpVec.front() = bam_cigar_gen(1,'S');
+//    }
+//    //Append the virus cigar vector
+//    opVec.insert(opVec.end(),vOpVec.begin(),vOpVec.end());
+//    //Convert match/mismatch (X/=) to aligned(M)
+//    for(auto it = opVec.begin(); it != opVec.end();it++){
+//        char opChr = bam_cigar_opchr(*it);
+//        if(opChr == '=' || opChr == 'X'){
+//            *it = bam_cigar_gen(bam_cigar_oplen(*it),'M');
+//        }
+//    }
+//    //Collapse together consecutive align ops
+//    for(auto it = opVec.begin(),nx=std::next(it); nx != opVec.end();){
+//        char opChr = bam_cigar_opchr(*it);
+//        char nextOpChr = bam_cigar_opchr(*nx);
+//        if(opChr == nextOpChr && opChr == 'M'){
+//            *it = bam_cigar_gen(bam_cigar_oplen(*it)+bam_cigar_oplen(*(it+1)),
+//                                'M');
+//            nx = opVec.erase(nx);
+//        } else {
+//            it = nx;
+//            nx++;
+//        }
+//    }
+//    return opVec;
+//}
 
 //Identifies Duplicate reads at an edge, duplicates are defined as having
 //the same left map in the host and right map in the virus
@@ -692,10 +667,6 @@ std::vector<uint32_t> ConstructJointModCigar(
 //         - an alignment map to inform the deduplication
 //Output - None, modifies the given object
 void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
-    ////Tuple includes distal position on the other genome, the score, and the 
-    ////  associated read pair
-    //typedef std::tuple<int32_t,double,ReadPair_pt> element_t;
-    //std::unordered_multimap<int32_t,element_t> readInfoMap;
     std::unordered_set<int32_t> hostPositionSet;
     std::unordered_set<int32_t> virusPositionSet;
     ReadPairSet_t toRemoveSet;
@@ -711,32 +682,21 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
             }
         );
     //Retain the first (highest scoring) read pair for any given pair of distal coordinates
-    //NOTE: there is a potential bug where the host distal and virus distal positions could be the same...
     for( rpp_pt pair_ptr : supportVec ) {
         const ReadPair_pt & frag = pair_ptr->first;
         const ReadPairAlnSummary_t & summary = pair_ptr->second;
-        int32_t hostDistal = (edge.hostRegion->opensLeft()) ?
-                                summary.hostRight : summary.hostLeft;
-        int32_t virusDistal = (edge.virusRegion->opensLeft()) ?
-                                summary.virusRight : summary.virusLeft;
-        bool bSeenHuman = hostPositionSet.count(hostDistal);
-        bool bSeenVirus = virusPositionSet.count(virusDistal);
-        
+        bool bSeenHuman = hostPositionSet.count(summary.hostDistal);
+        bool bSeenVirus = virusPositionSet.count(summary.virusDistal);
         //If Exploratory, then one end may be non-unique
         //otherwise both must be unique
         if( (!ExploratoryDeduplication && (bSeenHuman || bSeenVirus)) ||
             (bSeenHuman && bSeenVirus) ) 
         {
-            //Fragment does not have two unique distal positions
             toRemoveSet.insert(frag);
             continue;
         } 
-        hostPositionSet.insert(hostDistal);
-        virusPositionSet.insert(virusDistal);
-        //readInfoMap.insert(std::make_pair(hostDistal,
-        //                        element_t(virusDistal,summary.score,frag)));
-        //readInfoMap.insert(std::make_pair(virusDistal,
-        //                        element_t(hostDistal,summary.score,frag)));
+        hostPositionSet.insert(summary.hostDistal);
+        virusPositionSet.insert(summary.virusDistal);
     }
     for(const auto & frag : toRemoveSet){
         edge.removeSupport(frag);
@@ -852,41 +812,49 @@ void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
 //Remove reads that have suspicious alignments, alignments are considered
 //suspicious if:
 //  a split read's aligned position is too far from the breakpoint
+//  one mate's alignment is strictly inside another ( it doesn't have a junction
+//   distal position)
 //Inputs - an edge to process
 //         - an alignment map
 //Output - None, modifies the edge object
 void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
     ReadPairSet_t toRemoveSet;
     std::pair<size_t,size_t> offsets = edge.getOffsets();
+    //First pass to id strictly nested alignments
+    for(const auto & pair : edge.getSupportSummaryMap()) {
+        const ReadPair_pt & frag = pair.first;
+        const ReadPairAlnSummary_t & summary = pair.second;
+        if (!(summary.distalContribFlag & ReadPairAlnSummary_t::HAS_R1) || // R1 is inside R2
+            !(summary.distalContribFlag & ReadPairAlnSummary_t::HAS_R2) ) // R2 is inside R1
+        {
+            toRemoveSet.insert(frag);
+        }
+    }
+    //Second pass to id reads with split position too far
     for(const Region_pt & reg : {edge.hostRegion,edge.virusRegion}){
         long int curOffset =  (reg == edge.hostRegion) ?
                               offsets.first : offsets.second;
         //Set the most distal acceptable clip position
         for(const auto & pair : edge.getSupportSummaryMap()) {
             const ReadPair_pt & frag = pair.first;
-            //Skip fragments excluded on the other side
+            //Skip already excluded  fragments
             if( toRemoveSet.count(frag) ) { continue; }
-            const ReadPairAlnSummary_t & summary = pair.second;
-            long int proxPos;
-            switch(reg->opensLeft() + 2 * reg->isViral()) {
-                case 0b00 : //HR
-                    proxPos = summary.hostRight;
-                    break;
-                case 0b01 : //HL
-                    proxPos = summary.hostLeft;
-                    break;
-                case 0b10 : //VR
-                    proxPos = summary.virusRight;
-                    break;
-                case 0b11 : //VL
-                    proxPos = summary.virusLeft;
-                    break;
-            }
-            //As the offset is defined as the most extreme position across frags,
-            // any individual fragment's proximal position will be at least as
-            // distal
-            if(std::abs(proxPos - curOffset) > Config.max_sc_dist){
-                toRemoveSet.insert(frag);
+            //Check Each Read
+            for( bool checkR1 : {true, false}) {
+                SQPair_t sqp (reg,frag->getRead(checkR1));
+                //Skip unaligned reads
+                if(!alnMap.count(sqp)) { continue; }
+                auto & aln = alnMap.at(sqp);
+                //Skip unsplit alignments
+                if(!Edge_t::AlignmentIsSplit(reg->opensLeft(),aln)){ continue; }
+                long int proxPos =  reg->opensLeft() ?
+                                    aln.ref_begin : aln.ref_end;
+                //As the offset is defined as the most extreme position across frags,
+                // any individual fragment's proximal position will be at least as
+                // distal (no chance of underflow)
+                if(std::abs(proxPos - curOffset) > Config.max_sc_dist) {
+                    toRemoveSet.insert(frag);
+                }
             }
         }
     }
@@ -912,8 +880,6 @@ void FilterVector(  std::vector<T> & vec,
         }
     }
 }
-
-
 
 //Given a vecotr of strings (all assumed to be the same length) construct
 //a majority rule consensus string
@@ -997,64 +963,7 @@ std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
 }
 
 
-////Based on reads assigned to an edge, determine where within the host and
-////viral regions the actual breakpoints are
-////This goes through each read and finds the most extreme left and rightmost position
-////The host breakpoint is the rightmost position in the host region, unless reversed
-////The virus breakpoint is the leftmost position in the virus_region, unless reversed
-////This position is only within the reference region, if the region was reversed remember to
-////account for this during outputting
-////Inputs - an edge to process
-////         - an alignment map
-////Output - None, modifies the edge object
-//void IdentifyEdgeBreakpoints(Edge_t & edge, const AlignmentMap_t & alnMap){
-//
-//    for( const auto & pair : edge.getSupportSummaryMap() ) {
-//        
-//    }
-//    //Iterate over reads to find the extremes
-//    for ( const Region_pt & reg : {edge.hostRegion, edge.virusRegion} ) { 
-//        int32_t left = reg->sequence.length();
-//        int32_t right = 0;
-//        for( const ReadPair_pt & frag : edge.getSupport()){
-//            for(bool checkR1 : {true, false} ){
-//                SQPair_t sqp(reg,frag->getRead(checkR1));
-//                if(alnMap.count(sqp) <= 0) { continue; }
-//                const StripedSmithWaterman::Alignment & aln = alnMap.at(sqp);
-//                if(aln.ref_begin < left) { left = aln.ref_begin; }
-//                if(aln.ref_end > right) { right = aln.ref_end; }
-//            }
-//        }
-//        //Set the appropriate offset
-//        auto * offset_ptr = (reg == edge.hostRegion) ?  &(edge.hostOffset) :
-//                                                        &(edge.virusOffset);
-//        *offset_ptr = (reg->opensLeft()) ? left : right;
-//    }
-//}
-
-//TODO: Check if this is even needed
-////Determines which if any reads assigned to an edge are only assigned to
-////that edge
-////Inputs - a vector if edges
-////Output - None, modifies the edges
-//void IdentifyEdgeSpecificReads(EdgeVec_t & edgeVec) {
-//    std::unordered_map<Read_pt,size_t,Read_pt_HashFunctor,Read_pt_EqFunctor>
-//        edgeCount;
-//    for(const Edge_t & edge : edgeVec){
-//        for(const ReadPair_pt & frag : edge.supportSet){
-//            edgeCount[frag]++;
-//        }
-//    }
-//    for(Edge_t & edge : edgeVec){
-//        for(const Read_pt & frag : edge.supportSet){
-//            if(edgeCount[frag] == 1){
-//                edge.uniqueReadSet.insert(frag);
-//            }
-//        }
-//    }
-//}
-
-//Gicen two partial DNA sequences tests if the two have consistent
+//Given two partial DNA sequences tests if the two have consistent
 //sequences: that is they match at all non-N positions
 //Inputs - two strings representing the two sequences
 //Output - a boolean of whether they are consistent or not
@@ -1067,28 +976,6 @@ bool IsConsistent(const std::string & seq1, const std::string & seq2){
     }
     return true;
 }
-
-//TODO: FIXME New loading functions
-////Wrapper function which handles all basic loading
-////Inputs - strings representing the edges file, region sequence file,
-////            and bam file containing read sequences
-////         - references to objects to store the edges, and bidirectional
-////         mappings of reads and regions
-////Output - None , modifies provided references
-//void LoadData(        const std::string & edgeFName,
-//                const std::string & regionsFName,
-//                const std::string & bamFName,
-//                      Read2RegionsMap_t & read2regSetMap,
-//                      Region2ReadsMap_t & reg2readSetMap,
-//                Name2ReadMap_t & readNameMap,
-//                      EdgeVec_t & edgeVec)
-//{
-//    Name2RegionMap_t regNameMap;
-//    LoadRegionSeq(regionsFName,reg2readSetMap,regNameMap);
-//    LoadReadSeq(bamFName,read2regSetMap,readNameMap);
-//    LoadEdges(  edgeFName,read2regSetMap,reg2readSetMap,edgeVec,
-//                readNameMap,regNameMap);
-//}
 
 //Given paths to the edge and fragment edge associations as well as a mapping from fragment names to 
 //  ReadPair objects, construct a vector of Edges
@@ -1127,135 +1014,6 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
             counter,edgeVec.size() );
     return edgeVec;
 }
-
-//TODO: Make sure all desired functionality is transferred over
-////Parses edge file to load the regions, reads, and their associations
-////Inputs - a string representing the edge file name
-////         - a reference to mapping between reads and region sets
-////         - a reference to a mpaaing from regions to read sets
-////         - a reference to a vector of edges
-////         - a const reference to a mapping from read names to reads
-////         - a const reference to a mapping from region names to reads
-////Output - None, modifies to provided references
-//void LoadEdges(        std::string edgeFName,
-//                      Read2RegionsMap_t & read2regSetMap,
-//                      Region2ReadsMap_t & reg2readSetMap,
-//                      EdgeVec_t & edgeVec,
-//                const Name2ReadMap_t & readNameMap,
-//                const Name2RegionMap_t & regionNameMap)
-//{
-//    fprintf(stderr,"Loading Edges ...\n");
-//    std::ifstream in(edgeFName);
-//    if(!in.is_open()){
-//        fprintf(stderr,"[ERROR] Could not open %s for reading\n",
-//                edgeFName.c_str());
-//        throw std::invalid_argument("Failure to read Edge file");
-//    }
-//    std::string regStr,readStr;
-//    size_t nRead;
-//    std::string line;
-//    while(in >> regStr >> readStr >> nRead){
-//        std::vector<std::string> regionStringVec = strsplit(regStr,':');
-//        std::vector<std::string> readStringVec = strsplit(readStr,',');
-//        edgeVec.emplace_back(   regionNameMap.at(regionStringVec[0]),
-//                                regionNameMap.at(regionStringVec[1]));
-//        Edge_t & edge = edgeVec.back();
-//        for(std::string & rName : readStringVec){
-//            if(!rName.length()) continue;
-//            char segment = rName[rName.length()-1];
-//            if(        segment == 'H' || segment == 'V' ||
-//                segment == 'h' || segment == 'v')
-//            {
-//                rName = rName.substr(0,rName.length()-2);
-//            }
-//            const Read_pt & read = readNameMap.at(rName);
-//            edge.supportSet.insert(read);
-//            //TODO:FIXME
-//            //if(read->isSplit) edge.nSplit++;
-//            //Update the read 2 region and region 2 read maps
-//            read2regSetMap.at(read).insert(edge.hostRegion);
-//            read2regSetMap.at(read).insert(edge.virusRegion);
-//            reg2readSetMap.at(edge.hostRegion).insert(read);
-//            reg2readSetMap.at(edge.virusRegion).insert(read);
-//        }
-//    }
-//    fprintf(stderr,"Loaded %zu Edges\n",edgeVec.size());
-//}
-
-////Parses a fasta file containing reads and stores their sequences
-////The header of the entries is parsed for a trailing _1 or _2 to
-////seperate fwd and reverse reads
-////Sequences are always read in as upper case
-////Inputs - a string representing the bam file name
-////         - a reference to a mapping from reads to regions sets
-////Output - None, modifies the key objects of the map
-//void LoadReadSeq(   const std::string & readsFName,
-//                    Read2RegionsMap_t & read2regSetMap,
-//                    Name2ReadMap_t & nameMap)
-//{
-//    fprintf(stderr,"Loading Reads ...\n");
-//    FILE* readsFasta = fopen(readsFName.c_str(),"r");
-//    kseq_t *seq = kseq_init(fileno(readsFasta));
-//    while(kseq_read(seq) >= 0){
-//        std::string name = seq->name.s;
-//        char segment = name.back();
-//        bool bSplit = true;
-//        bool bViralR1 = false;
-//        if( segment == 'H' || segment == 'V' ||
-//            segment == 'h' || segment == 'v')
-//        {
-//            if(segment == 'h' || segment == 'v') bViralR1 = true;
-//            name = name.substr(0,name.length()-2);
-//            bSplit = false;
-//        }
-//        if(!nameMap.count(name)){ //Create the read object if necessary
-//            Read_pt read = std::make_shared<Read_t>(name,bSplit,bViralR1);
-//            nameMap.insert(std::make_pair(name,read));
-//        }
-//        //Add the sequence to the read
-//        std::string sequence(seq->seq.s);
-//        for (auto & c: sequence) c = (char)toupper(c);
-//        switch (segment) {
-//            case '1':
-//            case '2':
-//                nameMap[name]->hostSegment = sequence;
-//                nameMap[name]->virusSegment = sequence;
-//                nameMap[name]->hostRC = get_seqrc(sequence);
-//                nameMap[name]->virusRC = get_seqrc(sequence);
-//                break;
-//            case 'H':
-//            case 'h':
-//                nameMap[name]->hostSegment = sequence;
-//                nameMap[name]->hostRC = get_seqrc(sequence);
-//                break;
-//            case 'V':
-//            case 'v':
-//                nameMap[name]->virusSegment = sequence;
-//                nameMap[name]->virusRC = get_seqrc(sequence);
-//                break;
-//        }
-//    }
-//    //Create the key-value pairs in the output map
-//    //Values are default constructed
-//    //At the same time we will connect the split reads with their mates
-//    for( auto pair : nameMap){
-//        Read_pt & read = pair.second;
-//        //Check if the read is a split read
-//        char segment = read->name.back();
-//        if(segment == '1' || segment == '2'){
-//            std::string mateName = read->name;
-//            mateName.back() = (segment == '1') ? '2' : '1';
-//            //Check if the split read's mate is a read in the set
-//            if(nameMap.count(mateName)){
-//                read->mate = nameMap[mateName];
-//            }
-//        }
-//        read2regSetMap[read];
-//    }
-//    kseq_destroy(seq);
-//    fclose(readsFasta);
-//    fprintf(stderr,"Loaded %zu reads\n",read2regSetMap.size());
-//}
 
 //Parses a Read Region Association File and constructs a vector of associations
 //  this only associates labels together
@@ -1365,7 +1123,6 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     ProcessEdges(edgeVec,alnMap);
     //Remove insufficiently supported Edges
     //Find the edges which are unique to a particular edge
-    //IdentifyEdgeSpecificReads(edgeVec);
     ReadPairSet_t used; //Sort Edge Needs an object to work with
     SortEdgeVec(edgeVec,alnMap,used);
     fprintf(stderr,"Ordered %zu edges\n",edgeVec.size());
@@ -1375,7 +1132,6 @@ void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
                 std::ofstream & out)
 {
     //Output the call
-    //TODO:
     call_t call = ConstructCall(id, edge,alnMap);
     out << call.to_string() << "\n"; 
 }
@@ -1392,67 +1148,18 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
         const ReadPair_pt & frag = pair.first;
         if(used.count(frag)) continue;
         const ReadPairAlnSummary_t & summary = pair.second;
-        int32_t hDistal = edge.hostRegion->opensLeft() ?
-            summary.hostRight : summary.hostLeft;
-        int32_t vDistal = edge.virusRegion->opensLeft() ?
-            summary.virusRight : summary.virusLeft;
-        //Boolean of whether a position in the alignment for the read matches
-        // the distal positions for the whole fragment
-        //bool bR1H = false, bR1V=false, bR2H = false, bR2V=false;
-        //0x8, 0x4, 0x2, 0x1
-        uint8_t flag = 0;
-        for(bool checkR1 : {true, false} ){
-            int shift = (checkR1) ? 2 : 0;
-            const Read_pt read = frag->getRead(checkR1);
-            for(const Region_pt & reg : {edge.hostRegion,edge.virusRegion}) {
-                SQPair_t sqp(reg,read);
-                if(!alnMap.count(sqp)){ continue; }
-                auto aln = alnMap.at(sqp);
-                if(reg->isViral()) { // virus region
-                    if(aln.ref_end == vDistal || aln.ref_begin == vDistal) {
-                        flag |= (1<<shift);
-                    }
-                } else { // host region
-                    if(aln.ref_end == hDistal || aln.ref_begin == hDistal) {
-                        flag |= (1<<(shift+1));
-                    }
-                }
-            }
-        }
-        //Order the regions usch that R1 will be primarily be against the first
+        //Order the regions such that R1 will be primarily be against the first
         // and R2 against the second
         std::vector<Region_pt> regionOrder;
-        if( (flag & 0b0110) == 0b0110) { //R1 V primary, R2 H primary
+        if( (summary.distalContribFlag & 0b0110) == 0b0110) { //R1 V primary, R2 H primary
             regionOrder = {edge.virusRegion,edge.hostRegion};
-        } else if ( (flag & 0b1001) == 0b1001) { //R1 H primary, R2 V primary
+        } else if ( (summary.distalContribFlag & 0b1001) == 0b1001) { //R1 H primary, R2 V primary
             regionOrder = {edge.hostRegion,edge.virusRegion};
         } else { // Impossible cases of missing info or subsumed reads
             throw std::runtime_error(   "Summary - Aln mismatch; case: " +
-                                        std::to_string(flag));
+                                        std::to_string(summary.distalContribFlag));
         }
-        //switch (flag) {
-        //    // R1 V primary, R2 H primary
-        //    case 0b0110: // H222.|.111V
-        //    case 0b0111: // H333.|.111V
-        //    case 0b1110: // H333.|.111V
-        //        regionOrder = {edge.virusRegion,edge.hostRegion};
-        //        break;
-        //    // R2 V primary, R1 H primary
-        //    case 0b1001: // H111.|.222V
-        //    case 0b1011: // H333.|.222V
-        //    case 0b1101: // H111.|.333V
-        //    case 0b1111: // H333.|.333V //Arbitarilly put R1 H primary
-        //        regionOrder = {edge.hostRegion,edge.virusRegion,edge}
-        //        break;
-        //    default:
-        //        //!(flag & 0b1010) || !(flag & 0b0101) : the distal end in one region
-        //        // comes from neither read; Shouldn't happen
-        //        //!(flag & 0b1100) || !(flag & 0b0011) : Either R1 or R2 does
-        //        // not contribute to the distal ends. i.e wholly inside the other
-        //        // Shouldn't happen
-        //        throw std::runtime_error(   "Summary - Aln mismatch; case: " +
-        //                                    std::to_string(flag));
-        //}
+        //Construct the Bam Entries
         for(bool checkR1 : {true, false} ){
             const Read_pt read = frag->getRead(checkR1);
             //The first region processed is the primary, all supsequent are supp
@@ -1466,21 +1173,18 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
                 if(!alnMap.count(sqp)){ continue; }
                 const Region_pt & mateReg = regionOrder[!regIdx];
                 entryVec.push_back(bam_init1());
-                bool bCons = ConstructBamEntry( read,reg, mateReg,
-                                                bSupplementary, alnMap,
-                                                entryVec.back() );
+                bool bCons = ConstructBamEntry(read,reg,bSupplementary,
+                                               frag->getRead(!checkR1), mateReg,
+                                               alnMap, entryVec.back() );
                 if(!bCons) throw std::runtime_error("Cigar failure");
             }
         }
     }
-
-
     //Sort the reads by position
     std::sort(  entryVec.begin(),entryVec.end(),
                 [] (bam1_t* & a, bam1_t* & b) {
                     return compareBamByPos(a,b) == -1;
                 });
-
     //Iterate over sorted entries and write them
     for(bam1_t * & entry : entryVec){
         int ok = sam_write1(writer,JointHeader,entry);
@@ -1488,9 +1192,7 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
                                             std::string(writer->fn));
         bam_destroy1(entry);
     }
-
     sam_close(writer);
-    
     //Construct an index for the bam file
     std::string fullFName = readDir + '/' + fName;
     int code = sam_index_build(fullFName.c_str(),0);
@@ -1537,62 +1239,6 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
 //    //        hostSeq << '\n';
 //    //virusOut << '>' << id << '_' << virusSuffix << '\n' <<
 //    //        virusSeq << '\n';
-//}
-
-////Proceeds from high confidence edges to low confidence edges, ensuring
-////each read is used exactly once
-////  The edges may be reordered as 
-////Inputs - a reference to a vector of edges sorted from most to
-////            least confident
-////         - a const reference to an alignment map
-////         - a string representing the results file
-////         - a string representing the reads directory 
-////Output - None, prints to outfile
-//void OutputEdges(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
-//                    const Name2ReadMap_t & readNameMap,
-//                    const std::string & resFName, const std::string & readDir,
-//                    const std::string & hostbpFName,
-//                    const std::string & virusbpFName)
-//{
-//    fprintf(stderr,"Outputting Edges ensuring reads support only one edge...\n");
-//    ReadPairSet_t used;
-//    std::ofstream out(resFName);
-//    std::ofstream hbpOut(hostbpFName);
-//    std::ofstream vbpOut(virusbpFName);
-//    int nextJunctionID = 0;
-//    int start = edgeVec.size();
-//    int pert = 0;
-//    while(edgeVec.size()) {
-//        OutputEdge( nextJunctionID,edgeVec.back(),alnMap,out,readDir,
-//                    used);
-//        OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edgeVec.back(),alnMap,used);
-//        //Update the used reads
-//        for(const ReadPair_pt & frag : edgeVec.back().getSupport()){
-//            used.insert(frag);
-//            //Split reads from paired data can have both segments supporting a junction as they
-//            //may be split differently, but once one is used, the other cannot support any
-//            //other junction
-//            //TODO:FIXME
-//            //if(read->isSplit){ 
-//            //    std::string mateName = read->name;
-//            //    char suffix = mateName[mateName.length()-1];
-//            //    mateName[mateName.length()-1] = (suffix == '1') ? '2' : '1';
-//            //    if(readNameMap.count(mateName)){
-//            //        used.insert(readNameMap.at(mateName));
-//            //    }
-//            //}
-//        }
-//        nextJunctionID++;
-//        edgeVec.pop_back();
-//        FilterEdgeVec(edgeVec,&used);
-//        SortEdgeVec(edgeVec,alnMap,used);
-//        double progress = (start - edgeVec.size()) / double(start);
-//        if(1000.0 * progress > pert){
-//            pert = 1000 * progress;
-//            fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
-//        }
-//    }
-//    fprintf(stderr,"\nOutput %d Edges...\n",nextJunctionID);
 //}
 
 //Proceeds from high confidence edges to low confidence edges, ensuring
@@ -1681,10 +1327,9 @@ bool PassesEffectiveReadCount(  const Edge_t & edge,
 //         - an edge
 //         - an alignment map
 void ProcessEdge(int id,Edge_t & edge, const AlignmentMap_t & alnMap){
-    //IdentifyEdgeBreakpoints(edge,alnMap);
-    DeduplicateEdge(edge,alnMap);
     FilterHighInsertReads(edge,alnMap);
     FilterSuspiciousReads(edge,alnMap);
+    DeduplicateEdge(edge,alnMap);
     //Explicit call to ensure the offsets are ready when needed
     edge.getOffsets();
 }
@@ -1785,18 +1430,16 @@ void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap){
     fprintf(stderr,"Removing Unaligned reads from %zu edges...\n",edgeVec.size());
     for( Edge_t & edge : edgeVec){
         std::vector<ReadPair_pt> toRemoveVec;
-        for( const ReadPair_pt & frag : edge.getSupport()){
-            bool bPass = false;
-            //Check if there is at least one alignment to both the host and the virus
-            for( const Region_pt & curReg : { edge.hostRegion, edge.virusRegion } ){
-                bPass = false;
-                for( bool checkR1 : {true, false} ) {
-                    SQPair_t sqp(curReg,frag->getRead(checkR1));
-                    bPass = (alnMap.count(sqp) > 0);
-                }
-                //If one region fails, both do
-                if(!bPass) { break; }
-            }
+        for( const auto & pair : edge.getSupportSummaryMap()){
+            const ReadPair_pt & frag = pair.first;
+            const ReadPairAlnSummary_t & summary = pair.second;
+            //A paired alignment passes if at least one alignment exists for each of the following
+            //  R1, R2, Host, Virus
+            bool bPass =
+                (summary.hasAlnFlag & ReadPairAlnSummary_t::HAS_R1) &&
+                (summary.hasAlnFlag & ReadPairAlnSummary_t::HAS_R2) &&
+                (summary.hasAlnFlag & ReadPairAlnSummary_t::HAS_HOST) &&
+                (summary.hasAlnFlag & ReadPairAlnSummary_t::HAS_VIRUS);
             if(!bPass){
                 toRemoveVec.push_back(frag);
             }
