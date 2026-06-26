@@ -197,6 +197,14 @@ int main(int argc, char* argv[]) {
             "After merging and filtering, The region graph contains %d edges between %d regions  ...\n",
             regGraph.ecount(),regGraph.vcount());
 
+    //TODO: It can occur where two indistinguishable regions with seprate ids are created
+    //  this can cause some downstream issues (mostly handled), with the biggest
+    //  extant problem being bloat from duplicate entries. 
+    //  The todo list item is to either:
+    //      ID why this can happen and eliminate it
+    //      Identify that it has happened and collapse the duplicate regions together
+    //      updating associated information in edges as well
+
     OutputResults(  regGraph, ConstructReadRegionAssociations(regGraph,
                                 IndexChimericFragments(fragVecMap) ),
                     regFileName,edgeFileName,assocFileName,regAssocFileName);

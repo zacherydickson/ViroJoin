@@ -103,7 +103,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
 std::vector<RRLabelAssoc_t> LoadReadRegionAssoc(const std::string & rrFName);
 ReadSet_t LoadReads(const std::string & bamFName,
                     const std::unordered_set<std::string> * readNames = nullptr);
-RegionSet_t LoadRegions(const std::string jointRefFName,
+RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
                         const std::string regCandFName);
 void LoadRegionSeq( const std::string & regionsFName,
                     Region2ReadsMap_t & reg2readSetMap,
@@ -199,8 +199,9 @@ int main(int argc, const char* argv[]) {
         readNameSet.insert(assoc.readName);
     }
     ReadSet_t readSet = LoadReads(bam_file_name,&readNameSet);
-    RegionSet_t regionSet = LoadRegions(joint_ref_file_name,
+    RegID2RegionMap_t regIdtoRegionMap = LoadRegions(joint_ref_file_name,
                                         region_bed_file_name);
+    fprintf(stderr,"Indexing Read Pairs ...\n");
     //Index reads by read name - These are also the fragment objects
     Name2ReadPairMap_t rNametoReadPairMap;
     for(const auto & read : readSet){
@@ -209,12 +210,8 @@ int main(int argc, const char* argv[]) {
         }
         rNametoReadPairMap[read->name]->getRead(read->isR1) = read;
     }
-    //Index regions by region id
-    RegID2RegionMap_t regIdtoRegionMap;
-    for(const auto & region : regionSet){
-        regIdtoRegionMap[region->id] = region;
-    }
-    //Construct the mappings between actual objects
+    fprintf(stderr,"Indexed %lu Read Pairs\n",rNametoReadPairMap.size());
+    fprintf(stderr,"Associating read pairs with regions...\n");
     for(RRLabelAssoc_t & labelAssoc : rrLabelAssocVec) {
         auto & readPair = rNametoReadPairMap.at(labelAssoc.readName);
         auto & region = regIdtoRegionMap.at(labelAssoc.regionId);
@@ -226,6 +223,7 @@ int main(int argc, const char* argv[]) {
             reg2readSetMap[region].insert(readPair->getRead(checkingR1));
         }
     }
+    fprintf(stderr,"Bi-directionally Associated %lu ReadPairs and %lu Regions...\n", read2regSetMap.size(), reg2readSetMap.size());
     
     //Perform alignments
     AlignmentMap_t alnMap;
@@ -1060,13 +1058,14 @@ ReadSet_t LoadReads(const std::string & bamFName,
 //
 //Inputs - a path to a joint fasta reference
 //       - a path to a region candidate bed file
-RegionSet_t LoadRegions(const std::string jointRefFName,
+RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
                         const std::string regCandFName) 
 {
     fprintf(stderr,
             "Loading candidate regions from %s and %s ...\n", 
             jointRefFName.c_str(), regCandFName.c_str());
     RegionSet_t regSet;
+    RegID2RegionMap_t regIdtoRegionMap;
     std::ifstream regCandFile(regCandFName);
     faidx_t * jointRefFai = fai_load(jointRefFName.c_str());
     if(!jointRefFai) {
@@ -1090,12 +1089,15 @@ RegionSet_t LoadRegions(const std::string jointRefFName,
                                         jointRefFName);
         }
         std::string regSeqStr(regSeq,regLen);
-        regSet.insert(std::make_shared<Region_t>(   id, chr, regSeqStr, off,
-                                                    end, bViral, opensLeft) );
+        auto pair = regSet.insert(std::make_shared<Region_t>( 
+                        id, chr, regSeqStr, off, end, bViral, opensLeft) );
+        //the region might not be inserted if it is the same, but with a different id
+        //the first elem of pair is an iterator to the inserted (or blocking) region
+         regIdtoRegionMap[id] = *(pair.first);
     }
     fai_destroy(jointRefFai);
-    fprintf(stderr,"Loaded %lu candidate regions\n",regSet.size());
-    return regSet;
+    fprintf(stderr,"Loaded %lu candidate regions with %lu ids\n",regSet.size(),regIdtoRegionMap.size());
+    return regIdtoRegionMap;
 }
 
 //Process Edges and puts them into an order from most likely to be real to
