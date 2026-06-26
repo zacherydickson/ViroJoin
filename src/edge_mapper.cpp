@@ -1212,7 +1212,6 @@ void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
                     const Edge_t & edge, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used)
 {
-    //TODO: Test that the output is correct
     //Build the Table of aligned sequences
     std::vector<std::string> rowSeqVec;
     std::vector<size_t> nFillVec;
@@ -1230,7 +1229,7 @@ void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
                             consensus.substr(0,edge.hostRegion->sequence.length()),
                             rgx,"");
     std::string virusSeq = std::regex_replace(
-                            consensus.substr(edge.virusRegion->sequence.length()),
+                            consensus.substr(edge.hostRegion->sequence.length()),
                             rgx,"");
     char hostSuffix = (edge.hostRegion->opensLeft()) ? 'R' : 'L';
     char virusSuffix = (edge.virusRegion->opensLeft()) ? 'R' : 'L';
