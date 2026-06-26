@@ -112,6 +112,8 @@ public:
         if (this->data.empty()) {
             throw std::logic_error("Attempt to call top on empty CBranchedQueue");
         }
+        //Explicit call to make sure the offsets are current
+        this->data.front()->edge.getOffsets();
         return this->data.front()->edge;
     }
 
