@@ -1017,8 +1017,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
         vecIdx2ReadPairSetMap[vecIdx].insert(rpMap.at(name));
         counter++;
     }
-    fprintf(stderr,"Loaded %lu fragment-edge associations and %lu edges\n",
-            counter,edgeVec.size() );
+    fprintf(stderr,"Loaded %lu fragment-edge associations\n",counter);
     fprintf(stderr,"Assigning fragments to edges ...\n");
     ctpl::thread_pool threadPool (Config.threads);
     std::vector<std::future<void>> futureVec;
