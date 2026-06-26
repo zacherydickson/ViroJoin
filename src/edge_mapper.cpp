@@ -242,6 +242,8 @@ int main(int argc, const char* argv[]) {
     ////## Edge Processing
     OrderEdges(edgeVec,alnMap);
     ////## Output
+    //TODO: FIXME: The same readpair has been found supporting multiple breakpoints
+    //      This is unacceptable
     OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
                 hostbp_file_name,virusbp_file_name);
     ////## Cleanup
