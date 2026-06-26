@@ -47,7 +47,6 @@ StripedSmithWaterman::Filter AlnFilter(true,true,30,32767);
 StripedSmithWaterman::Aligner Aligner(1,4,6,1,false);
 int32_t AlnMaskLen;
 bool ExploratoryDeduplication = false;
-
 static size_t MinimumReads = 4;
 static size_t SplitBonus = 1;
 static double MaxDiffRate = 0.06;
@@ -747,8 +746,7 @@ size_t FillStringFromAlignment( std::string & outseq,
                 }
                 break;
             case 'I': //Insertions are treated as internal soft clips
-                //TODO Check if insertions are handled properly
-                //FIXME: They are not
+                //TODO: This should eventually be addressed, for now it is the behaviour
                 qpos += opLen;
                 break;
             case 'D':
