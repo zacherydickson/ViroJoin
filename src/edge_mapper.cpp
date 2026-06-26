@@ -43,7 +43,10 @@ config_t Config;
 stats_t Stats;
 bam_hdr_t* JointHeader;
 //For an alignment to pass it must have a score of at least 30
-StripedSmithWaterman::Filter AlnFilter(true,true,30,32767);
+//NOTE:The Built in Filter is not used as it leads to alignments without cigar strings
+//which explode when we go to test them, by using a default filter, everything
+//has a cigar 
+StripedSmithWaterman::Filter AlnFilter;//(true,true,30,32767);
 StripedSmithWaterman::Aligner Aligner(1,4,6,1,false);
 int32_t AlnMaskLen;
 bool ExploratoryDeduplication = false;
