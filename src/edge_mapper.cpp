@@ -987,8 +987,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
                     const RegID2RegionMap_t & regMap,
                     const AlignmentMap_t & alnMap)
 {
-    fprintf(stderr,"Loading Edges from %s and %s ...\n",edgeFName.c_str(),
-            feFName.c_str());
+    fprintf(stderr,"Loading Edges from %s...\n",edgeFName.c_str());
     EdgeVec_t edgeVec;
     std::ifstream edgeFile(edgeFName);
     long int edgeID;
@@ -1001,15 +1000,45 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
         edgeVec.emplace_back(regMap.at(hostRegId),regMap.at(virusRegId));
         edgeVec.back().id = edgeID;
     }
+    fprintf(stderr,"Loaded %lu Edges\n",edgeVec.size());
+    fprintf(stderr,"Loading Fragment-edge associations from %s ...\n",
+            feFName.c_str());
     std::ifstream feFile(feFName);
     std::string name;
     long int groupID;
     size_t counter = 0;
+    std::unordered_map<size_t,ReadPairSet_t> vecIdx2ReadPairSetMap;
     while(feFile >> name >> edgeID >> groupID){
-        edgeVec[edgeID2VecIdxMap.at(edgeID)].addSupport(rpMap.at(name),alnMap);
+        size_t vecIdx = edgeID2VecIdxMap.at(edgeID);
+        vecIdx2ReadPairSetMap[vecIdx].insert(rpMap.at(name));
         counter++;
     }
     fprintf(stderr,"Loaded %lu fragment-edge associations and %lu edges\n",
+            counter,edgeVec.size() );
+    fprintf(stderr,"Assigning fragments to edges ...\n");
+    ctpl::thread_pool threadPool (Config.threads);
+    std::vector<std::future<void>> futureVec;
+    for(const auto & pair : vecIdx2ReadPairSetMap){
+        auto future = threadPool.push(
+                [&edgeVec,&pair,&alnMap](int id) {
+                    for(const auto & frag : pair.second){
+                        edgeVec[pair.first].addSupport(frag,alnMap);
+                    }
+                } );
+        futureVec.push_back(std::move(future));
+    }
+    int pert = 0;
+    size_t complete = 0;
+    for (auto & future : futureVec) {
+        future.get();
+        complete++;
+        double progress = complete / double(futureVec.size());
+        if(1000.0 * progress > pert){
+            pert = 1000 * progress;
+            fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
+        }
+    }
+    fprintf(stderr,"Assigned %lu fragment-edge associations and %lu edges\n",
             counter,edgeVec.size() );
     return edgeVec;
 }
