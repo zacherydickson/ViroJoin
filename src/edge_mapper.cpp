@@ -334,8 +334,9 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
     //Iterate over sq pairs and erase any which are below threshold
     for( const SQPair_t * & pPair : sqPairVec){
         Mtx.lock();
-        if(alnMap.at(*pPair).sw_score < minScore[pPair->subject->isViral()]){
-            alnMap.erase(*pPair);
+        auto it = alnMap.find(*pPair);
+        if(it->second.sw_score < minScore[pPair->subject->isViral()]){
+            alnMap.erase(it);
         }
         Mtx.unlock();
     }
@@ -468,11 +469,12 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
         //Primary Alignments point towards the junction
         if(subject->opensLeft()) {flag |= BAM_FREVERSE;}
         SQPair_t msqp(mateSubject,mate);
-        if(alnMap.count(msqp)){
+        auto it = alnMap.find(msqp);
+        if(it != alnMap.end()){
             flag |= BAM_FPAIRED;
             if(mateSubject->opensLeft()) {flag |= BAM_FMREVERSE;}
             mtid = sam_hdr_name2tid(JointHeader,mateSubject->chromosome.c_str());
-            const StripedSmithWaterman::Alignment & mateAln = alnMap.at(msqp);
+            const StripedSmithWaterman::Alignment & mateAln = it->second;
             mpos = mateSubject->offset + mateAln.ref_begin;
         } else {
             //A primary alignment's mate SHOULD have a primary alignment
@@ -842,8 +844,9 @@ void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
             for( bool checkR1 : {true, false}) {
                 SQPair_t sqp (reg,frag->getRead(checkR1));
                 //Skip unaligned reads
-                if(!alnMap.count(sqp)) { continue; }
-                auto & aln = alnMap.at(sqp);
+                auto it = alnMap.find(sqp);
+                if(it == alnMap.end()) { continue; }
+                auto & aln = it->second;
                 //Skip unsplit alignments
                 if(!Edge_t::AlignmentIsSplit(reg->opensLeft(),aln)){ continue; }
                 long int proxPos =  reg->opensLeft() ?
@@ -946,8 +949,9 @@ std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
         for(bool checkR1 : {false, true} ){
             const Read_pt & read = rp->getRead(checkR1);
             SQPair_t sqp(reg,read);
-            if(alnMap.count(sqp) <= 0) {continue; }
-            const StripedSmithWaterman::Alignment & aln = alnMap.at(sqp);
+            auto it = alnMap.find(sqp);
+            if(it == alnMap.end()) {continue; }
+            const StripedSmithWaterman::Alignment & aln = it->second;
             //Determine which strand of was aligned to the region
             //sw_score_next_best has been co-opted to store the strand of the read's alignment
             //against the subject

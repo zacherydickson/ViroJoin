@@ -574,9 +574,10 @@ struct Edge_t {
             for ( const Region_pt & curReg :
                     {this->hostRegion, this->virusRegion})
             {
-                SQPair_t pair(curReg,frag->getRead(checkR1));
+                SQPair_t sqp(curReg,frag->getRead(checkR1));
                 //Skip read-region pairs with no alignment
-                if(!alnMap.count(pair)) { continue; }
+                auto it = alnMap.find(sqp);
+                if(it == alnMap.end()) { continue; }
                 uint8_t mateShift = checkR1 ?
                                     ReadPairAlnSummary_t::R1_SHIFT :
                                     ReadPairAlnSummary_t::R2_SHIFT;
@@ -584,8 +585,7 @@ struct Edge_t {
                                     ReadPairAlnSummary_t::VIRUS_SHIFT :
                                     ReadPairAlnSummary_t::HOST_SHIFT;
                 summary.hasAlnFlag |= (1 << (mateShift + regShift));
-                const StripedSmithWaterman::Alignment & aln =
-                    alnMap.at(pair);
+                const StripedSmithWaterman::Alignment & aln = it->second;
                 if(Edge_t::AlignmentIsSplit(curReg->opensLeft(),aln)){
                     splitCount++;
                 }
@@ -632,11 +632,11 @@ struct Edge_t {
             for ( const Region_pt & curReg :
                     {this->hostRegion, this->virusRegion})
             {
-                SQPair_t pair(curReg,frag->getRead(checkR1));
+                SQPair_t sqp(curReg,frag->getRead(checkR1));
                 //Skip read-region pairs with no alignment
-                if(!alnMap.count(pair)) { continue; }
-                const StripedSmithWaterman::Alignment & aln =
-                    alnMap.at(pair);
+                auto it = alnMap.find(sqp);
+                if(it == alnMap.end()) { continue; }
+                const StripedSmithWaterman::Alignment & aln = it->second;
                 int32_t * distal_ptr =  &summary.hostDistal;
                 uint8_t regShift = ReadPairAlnSummary_t::HOST_SHIFT;
                 if(curReg->isViral())  {
