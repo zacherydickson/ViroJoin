@@ -118,7 +118,7 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "edgeCand"  : "edges.tab",
         "discard"   : "results.discarded.txt",
         "filtRes"   : "results.remapped.t1.txt",
-        "feAssoc"   : "fragment-edge-associations.tab"
+        "feAssoc"   : "fragment-edge-associations.tab",
         "fqBam"     : os.path.join("bam_0","retained-pairs.namesorted.bam"),
         "fqStats"   : os.path.join("bam_0","stats.txt"),
         "fqSrtBam"  : os.path.join("bam_0","retained-pairs.remapped.cs.bam"),
@@ -129,15 +129,15 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "jBed"      : "j.bed",
         "juncCand"  : "junction-candidates.bedpe",
         "regCand"   : "region-candidates.bed",
-        "rrAssoc"   : "read-region-associations.tab"
+        "rrAssoc"   : "read-region-associations.tab",
         "rrMap"     : "read_regionMap.tab",
         "rawRes"    : "results.txt",
         "vBed"      : "v.bed",
         "vNames"    : "virusNames.list",
-        "vSeq"      : "virus_bp_seqs.fa"
+        "vSeq"      : "virus_bp_seqs.fa",
         #defunct
         "readSeq"   : "edge_reads.fna",
-        "regSeq"    : "regions.fna",
+        "regSeq"    : "regions.fna"
     }.items()
 }
 
@@ -156,10 +156,11 @@ CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
 ]
 
 BIN_DICT = { nm : os.path.join(SURVIRUS_BIN_PATH,nm) for nm in (
-        "cleanbam", "addX2tag", "enumerate_edges", "enumerate_chimeric_fragments"
+        "cleanbam", "addX2tag", "enumerate_edges_via_fragments", "enumerate_chimeric_fragments",
         "cluster_junctions", "edge_mapper", "extract_clips", "extract_regions",
         "filter", "isolate_relevant_pairs", "isolate_relevant_pairs_fq" )
 }
+
 UTIL_DICT = { nm : os.path.join(SURVIRUS_UTIL_PATH,path) for nm,path in {
         "adjCov"    : "adjustCoverage.sh",
         "e2eBed"    : "edge2edgeRegionBed.awk",
@@ -476,8 +477,8 @@ if missing_file(PATH_DICT["juncCand"]):
 
 #Combine candidate junctions into candidate regions with edges between them
 enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges_via_fragments']}"
-                    f" {cmd_args.workdir} {bam_workspace}"
-if any(mising_file(PATH_DICT[x]) for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc")):
+                    f" {cmd_args.workdir} {bam_workspace}" )
+if any(missing_file(PATH_DICT[x]) for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc")):
     execute(enum_edges_cmd)
 
 ## Collapse Junctions together into regions
@@ -516,7 +517,7 @@ if not os.path.exists(readsx):
     os.makedirs(readsx)
 ##Edgemapper Command
 edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
-                    f" {cmd_args.virus_reference} {cmd_args.workdir}"
+                    f" {cmd_args.host_and_virus_reference} {cmd_args.workdir}"
                     f" {bam_workspace}" )
 if any(missing_file(PATH_DICT[nm]) for nm in ( "rawRes", "hSeq", "vSeq" )):
     execute(edge_mapper_cmd)
