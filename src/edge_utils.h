@@ -14,7 +14,6 @@
 #include <ssw.h>
 #include <ssw_cpp.h>
 
-
 struct CannonicalSeq_t {
     protected:
     std::string cannon;
@@ -496,7 +495,7 @@ struct Edge_t {
         m_cachedScore = -1;
         return true;
     }
-    bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t alnMap){
+    bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t & alnMap){
         return addSupport(frag,this->getRPAlnSummary(frag,alnMap));
     }
     bool transferSupport(const ReadPair_pt & frag, Edge_t & other,bool bRemove = true){
@@ -558,7 +557,7 @@ struct Edge_t {
     //a summary is extracted for the pair of reads mapped to this edges' regions
     //This is cached for future reference
     ReadPairAlnSummary_t getRPAlnSummary(   const ReadPair_pt & frag,
-                                            const AlignmentMap_t alnMap)
+                                            const AlignmentMap_t & alnMap)
     {
         ReadPairAlnSummary_t summary;
         if(!this->hostRegion || !this->virusRegion) { return summary; }
@@ -686,22 +685,9 @@ struct Edge_t {
             const ReadPair_pt & frag = pair.first;
             if(used.count(frag)) { continue; }
             my_score += pair.second.score();
-            //for ( bool checkR1 : {true, false} ){
-            //    for ( const Region_pt & curReg :
-            //            {this->hostRegion, this->virusRegion})
-            //    {
-            //        SQPair_t pair(curReg,frag->getRead(checkR1));
-            //        const StripedSmithWaterman::Alignment & aln =
-            //            alnMap.at(pair);
-            //        my_score += aln.sw_score;
-            //    }
-            //}
         }
         return my_score;
     }
-    //private:
-    //void parseRegString(const std::string & regStr);
-    //void parseReadString(const std::string & readStr);
 };
 
 
