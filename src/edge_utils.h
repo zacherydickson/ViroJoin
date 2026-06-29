@@ -336,6 +336,7 @@ struct Region_pt_HashFunctor {
 
 
 //Sets of shared pointers to reads and regions
+typedef std::vector<Read_pt> ReadVec_t;
 typedef std::unordered_set<Read_pt,Read_pt_HashFunctor,Read_pt_EqFunctor>
             ReadSet_t;
 typedef std::unordered_set<Region_pt,Region_pt_HashFunctor,Region_pt_EqFunctor>
