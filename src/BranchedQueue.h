@@ -10,6 +10,7 @@
     Has a public method getSupport with signature const ElementSetType &()
     Has a public method addSupport with signature bool(const ElementType &, const ContextType &)
     Has a public method removeSupport with signature bool(const ElementType &)
+    Has a public method getOffsets with signature *()
   ElementType must meet the following criteria
     Must be a pointer type
   ElementSetType should be a std::unordered_set<ElementType>
