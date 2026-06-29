@@ -14,6 +14,7 @@ struct config_t {
     int read_len;
     std::string cram_reference;
     bool explore;
+    bool clique;
 };
 
 config_t parse_config(std::string file) {
@@ -35,6 +36,7 @@ config_t parse_config(std::string file) {
         config.cram_reference = config_params["cram_reference"];
     }
     config.explore = config_params["explore"] == "True";
+    config.clique = config_params["clique"] == "True";
     return config;
 };
 

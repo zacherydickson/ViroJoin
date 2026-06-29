@@ -74,6 +74,7 @@ int             ReadLength;
 const int       SplitBonus = 1;
 const double    SplitFactor = 2.0;
 int             UpstreamSize = 5;
+bool	        BCliqueClustering = false;
 
 //==== FUNCTION DECLARATIONS
 
@@ -174,8 +175,12 @@ int main(int argc, char* argv[]) {
 
     //Load global variables
     MaxInsertSize = parse_stats(stats_file_name).max_is;
-    ReadLength = parse_config(config_file_name).read_len;
-    size_t nThread = parse_config(config_file_name).threads;
+    std::cerr << "PRe\n";
+    auto config = parse_config(config_file_name);
+    ReadLength = config.read_len;
+    size_t nThread = config.threads;
+    BCliqueClustering = config.clique;
+    std::cerr << "Post\n";
 
     //Initialize igraph
     igraph_setup();
@@ -232,7 +237,11 @@ bool ChimericFragmentOverlapsRegion(const ChimericFragment_t & frag,
 //Inputs    - a graph to filter
 //Output    - true if the graph still has sufficient support, false otherwise
 bool ClusterBPGraph(CBPGraph & graph) {
-    return graph.maximalCliques(MinimumReads, SplitBonus);
+    if(BCliqueClustering){
+        return graph.maximalCliques(MinimumReads, SplitBonus);
+    } else { //Otherwise go with connected components
+        return true;
+    }
 }
 
 bool ClusterBPGraphVec(BPGraphVec_t & graphVec) {
