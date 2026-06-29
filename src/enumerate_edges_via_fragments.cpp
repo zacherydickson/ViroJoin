@@ -175,12 +175,10 @@ int main(int argc, char* argv[]) {
 
     //Load global variables
     MaxInsertSize = parse_stats(stats_file_name).max_is;
-    std::cerr << "PRe\n";
     auto config = parse_config(config_file_name);
     ReadLength = config.read_len;
     size_t nThread = config.threads;
     BCliqueClustering = config.clique;
-    std::cerr << "Post\n";
 
     //Initialize igraph
     igraph_setup();

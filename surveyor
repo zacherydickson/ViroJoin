@@ -115,10 +115,11 @@ cmd_args = cmd_parser.parse_args()
 
 PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "adjRes"    : "results.remapped.txt",
+        "allReadsx" : "allReadsx.bam",
         "config"    : "config.txt",
         "ctgLen"    : "contig_lengths.tab",
         "ctgMap"    : "contig_map",
-        "edgeCand"  : "edges.tab",
+        "edgeCand"  : "edge-candidates.tab",
         "discard"   : "results.discarded.txt",
         "filtRes"   : "results.remapped.t1.txt",
         "feAssoc"   : "fragment-edge-associations.tab",
@@ -147,21 +148,20 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
 CLEANUP_PATH_LIST = [ PATH_DICT[key] for key in [
         "adjRes", "ctgLen", "ctgMap", "edgeCand", "discard", "feAssoc",
         "frawRes", "hBed", "jBed", "juncCand", "regCand", "rrAssoc", "rawRes",
-        "vBed","vNames",
+        "vBed","vNames", 
         #defunct
         "readSeq", "regSeq" 
     ]
 ]
 CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
         "bam_0", "head.sam", "head_1.fq", "head_2.fq",
-        "host_bp_seqs.masked.bed", "virus_bp_seqs.masked.bed"
+        "host_bp_seqs.masked.bed", "virus_bp_seqs.masked.bed", "readsx"
     ]
 ]
 
 BIN_DICT = { nm : os.path.join(SURVIRUS_BIN_PATH,nm) for nm in (
-        "cleanbam", "addX2tag", "enumerate_edges_via_fragments", "enumerate_chimeric_fragments",
-        "cluster_junctions", "edge_mapper", "extract_clips", "extract_regions",
-        "filter", "isolate_relevant_pairs", "isolate_relevant_pairs_fq" )
+        "cleanbam", "addX2tag", "enumerate_edges", "enumerate_chimeric_fragments",
+        "edge_mapper", "extract_clips", "filter", "isolate_relevant_pairs_fq" )
 }
 
 UTIL_DICT = { nm : os.path.join(SURVIRUS_UTIL_PATH,path) for nm,path in {
@@ -198,10 +198,10 @@ def get_depend_ver(cmd):
             v_str = out[2].split()[1]
     return Version(v_str)
 
-def execute(cmd):
+def execute(cmd,mustPass=True):
     "Logs and executes a command"
     eprint("Executing:", cmd)
-    if not os.system(cmd) == 0:
+    if not os.system(cmd) == 0 and mustPass:
         eprint("Execution Failed - Exiting")
         sys.exit(1)
 
@@ -480,41 +480,11 @@ if missing_file(PATH_DICT["juncCand"]):
         filter_bedpe(PATH_DICT['juncCand'])
 
 #Combine candidate junctions into candidate regions with edges between them
-enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges_via_fragments']}"
+enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges']}"
                     f" {cmd_args.workdir} {bam_workspace}" )
 if any(missing_file(PATH_DICT[x]) for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc")):
     execute(enum_edges_cmd)
 
-## Collapse Junctions together into regions
-#cluster_junctions_cmd = (   f"{BIN_DICT['cluster_junctions']}"
-#                            f" {cmd_args.virus_reference}"
-#                            f" {cmd_args.workdir} {bam_workspace}" )
-#if missing_file(PATH_DICT["regCand"]):
-#    execute(cluster_junctions_cmd)
-#    if cmd_args.excluded_regions_bed is not None:
-#        filter_bed(PATH_DICT['regCand'],strict_filter=False)
-### Pair up host-viral regions and assign reads to each edge, filter edges
-###  with too few reads
-#enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges']}"
-#                    f" {cmd_args.virus_reference} {PATH_DICT['regCand']} {PATH_DICT['rrMap']} >"
-#                    f" {PATH_DICT['edges']}" )
-#if missing_file(PATH_DICT["edges"]):
-#    execute(enum_edges_cmd)
-##Get the sequences of the regions of interest
-#extract_regions_cmd = ( f"{UTIL_DICT['e2eBed']} {PATH_DICT['fqStats']}"
-#                        f" {PATH_DICT['ctgLen']} {PATH_DICT['edges']} |"
-#                        f" {cmd_args.bedtools} getfasta -s -name"
-#                        f" -fi {cmd_args.host_and_virus_reference} -bed - >"
-#                        f" {PATH_DICT['regSeq']}" )
-#if missing_file(PATH_DICT['regSeq']):
-#    execute(extract_regions_cmd)
-###Extract the fasta sequences of the reads on the edges
-#extract_reads_cmd = ( f"{cmd_args.samtools} view {PATH_DICT['fqBam']} |"
-#                      f" {UTIL_DICT['extERead']} {PATH_DICT['vNames']}"
-#                      f" {PATH_DICT['edges']} /dev/stdin >"
-#                      f" {PATH_DICT['readSeq']}" )
-#if missing_file(PATH_DICT['readSeq']):
-#    execute(extract_reads_cmd)
 #Make the readsx dir
 readsx = cmd_args.workdir + "/readsx"
 if not os.path.exists(readsx):
@@ -525,6 +495,10 @@ edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
                     f" {bam_workspace}" )
 if any(missing_file(PATH_DICT[nm]) for nm in ( "rawRes", "hSeq", "vSeq" )):
     execute(edge_mapper_cmd)
+merge_readsx_cmd = ( f"{cmd_args.samtools} merge -r --write-index"
+                     f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
+if missing_file(PATH_DICT["allReadsx"]):
+    execute(merge_readsx_cmd,mustPass=False)
 ##Dust Filter the breakpoint sequences
 for side in ("host", "virus"):
     tgtFile = f"{cmd_args.workdir}/{side}_bp_seqs.masked.bed"
