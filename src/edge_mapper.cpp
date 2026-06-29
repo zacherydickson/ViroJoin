@@ -3,6 +3,7 @@
 #include <iostream>
 #include <htslib/sam.h>
 #include <htslib/faidx.h>
+#include <filesystem>
 #include <forward_list>
 #include <memory>
 #include <regex>
@@ -74,7 +75,8 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
                         bam1_t* entry);
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset);
 call_t ConstructCall(   int id, const Edge_t & edge,
-                        const AlignmentMap_t & alnMap);
+                        const AlignmentMap_t & alnMap,
+                        const ReadPairSet_t & used);
 void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
                         CBranchedEdgeQueue & edgeQueue);
 //JunctionInterval_t ConstructJIV(char strand, bool isVirus,
@@ -106,6 +108,9 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
 std::vector<RRLabelAssoc_t> LoadReadRegionAssoc(const std::string & rrFName);
 ReadSet_t LoadReads(const std::string & bamFName,
                     const std::unordered_set<std::string> * readNames = nullptr);
+ReadVec_t LoadReadsInRef(
+        const std::string & alnFileName, int tid,hts_pos_t beg, hts_pos_t end,
+        const std::unordered_set<std::string> * rNames = nullptr);
 RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
                         const std::string regCandFName);
 void LoadRegionSeq( const std::string & regionsFName,
@@ -113,7 +118,7 @@ void LoadRegionSeq( const std::string & regionsFName,
                     Name2RegionMap_t & nameMap);
 void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                std::ofstream & out);
+                std::ofstream & out, const ReadPairSet_t & used);
 void OuputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
                 const std::string & readDir, const ReadPairSet_t & used);
 void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
@@ -170,7 +175,7 @@ int main(int argc, const char* argv[]) {
     //std::string edge_file_name = workdir + "/edges.tab";
 
 
-    std::string bam_file_name = workspace + "/retained-pairs.namesorted.bam";
+    std::string bam_file_name = workspace + "/retained-pairs.remapped.cs.bam";
     std::string edge_file_name = workdir + "/edge-candidates.tab";
     std::string fragment_edge_file_name = workdir + "/fragment-edge-associations.tab";
     std::string read_region_file_name = workdir + "/read-region-associations.tab";
@@ -180,6 +185,17 @@ int main(int argc, const char* argv[]) {
     std::string reads_dir = workdir + "/readsx";
     std::string hostbp_file_name = workdir + "/host_bp_seqs.fa";
     std::string virusbp_file_name = workdir + "/virus_bp_seqs.fa";
+    //Quick test for required files
+    for(const std::string & path : {
+            joint_ref_file_name, bam_file_name, edge_file_name,
+            fragment_edge_file_name, read_region_file_name,
+            region_bed_file_name, reads_dir} )
+    {
+        if(!std::filesystem::exists(path)){
+            fprintf(stderr,"[ERROR] %s does not exist",path.c_str());
+            return 1;
+        }
+    }
     //## Configuration
     //LoadVirusNames(virus_ref_file_name,VirusNameSet);
     Config = parse_config(config_file_name);
@@ -249,6 +265,7 @@ int main(int argc, const char* argv[]) {
     ////## Cleanup
     bam_hdr_destroy(JointHeader);
     fprintf(stderr,"edge_mapper Done\n");
+    return 0;
 }
 
 //==== FUNCTION DEFINITIONS
@@ -368,7 +385,7 @@ void AlignReads(const Read2RegionsMap_t &regMap,
         future.get();
         complete++;
         double progress = complete / double(futureVec.size());
-        if(1000.0 * progress > pert){
+        if(1000.0 * progress > pert+1){
             pert = 1000 * progress;
             fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
         }
@@ -377,7 +394,7 @@ void AlignReads(const Read2RegionsMap_t &regMap,
     //for(const auto & pair : regMap){
     //    AlignRead(0,pair.first,pair.second,alnMap);
     //}
-    fprintf(stderr,"\nPassing Alignments: %zu\n",alnMap.size());
+    fprintf(stderr,"Passing Alignments: %zu\n",alnMap.size());
 }
 
 bool AreConsistentCigars(   std::vector<uint32_t> vec1,
@@ -513,9 +530,11 @@ breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset){
 //         - an edge object
 //         - an alignment map
 //Output - a call_t object (see utils.h)
-call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
+call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
+                        const ReadPairSet_t & used)
 {
-    size_t nReads = edge.getSupport().size();
+    size_t nReads = 0;
+    size_t nSplit = 0;
     std::pair<size_t,size_t> offsets = edge.getOffsets();
     breakpoint_t hostBP = ConstructBreakpoint(edge.hostRegion,offsets.first);
     breakpoint_t virusBP = ConstructBreakpoint(edge.virusRegion,offsets.second);
@@ -525,7 +544,11 @@ call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
     int32_t virusLeft = edge.virusRegion->sequence.length(), virusRight = 0;
     int score = 0;
     for(const auto & pair : edge.getSupportSummaryMap()){
+        const ReadPair_pt & frag = pair.first;
         const ReadPairAlnSummary_t & summary = pair.second;
+        if(used.count(frag)) { continue; }
+        nReads++;
+        if(summary.isSplit) { nSplit++; }
         if(summary.hostLeft < hostLeft) { hostLeft = summary.hostLeft; }
         if(summary.hostRight > hostRight) { hostRight = summary.hostRight; }
         if(summary.virusLeft < virusLeft) { virusLeft = summary.virusLeft; }
@@ -544,7 +567,7 @@ call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
     if(virusLeft <= virusRight) {
         virusCov = double(virusRight - virusLeft) / (Stats.max_is - MinimumAlignmentLength);
     }
-    return call_t(id,hostBP,virusBP,nReads,nReads,edge.splitCount(),0,0,
+    return call_t(id,hostBP,virusBP,nReads,nReads,nSplit,0,0,
             score,hostPBS,virusPBS,hostCov,virusCov);
 }
 
@@ -565,12 +588,12 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
     for(auto it = edgeVec.rbegin(); it != edgeVec.rend(); it++){
         edgeQueue.addEdge(*it);
         double progress = (++processed) / double(edgeVec.size());
-        if(1000.0 * progress > pert){
+        if(1000.0 * progress > pert+1){
             pert = 1000 * progress;
             fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
         }
     }
-    fprintf(stderr,"\nEdge Queue has %lu edges across %lu branches\n",
+    fprintf(stderr,"Edge Queue has %lu edges across %lu branches\n",
             edgeQueue.queueSize(),edgeQueue.size());
 }
 
@@ -1038,7 +1061,7 @@ EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
         future.get();
         complete++;
         double progress = complete / double(futureVec.size());
-        if(1000.0 * progress > pert){
+        if(1000.0 * progress > pert+1){
             pert = 1000 * progress;
             fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
         }
@@ -1074,20 +1097,74 @@ ReadSet_t LoadReads(const std::string & bamFName,
 {
     fprintf(stderr,"Loading candidate reads from %s ...\n", bamFName.c_str());
     ReadSet_t readSet;
-    open_samFile_t* alnFile = open_samFile(bamFName.c_str(),false,false);
-    bam1_t* entry = bam_init1();
-    //Iterate over reads in the bam file
-    while(sam_read1(alnFile->file,alnFile->header,entry) >= 0){
-        //If an allow list was provided, only keep reads in that allow list
-        if(!allowList_ptr || allowList_ptr->count(bam_get_qname(entry))){
-            readSet.insert(std::make_shared<Read_t>(entry));
+    ctpl::thread_pool threadPool(Config.threads);
+    //Get the number of references to process
+    open_samFile_t* alnFile = open_samFile(bamFName.c_str(),false,true);
+    int nref = sam_hdr_nref(alnFile->header);
+    //First pass determine the average number of mapped reads per reference
+    // as well as the number mapped per region
+    uint64_t unmapped = 0;
+    uint64_t total = 0;
+    std::vector<uint64_t> mappedVec(nref,0);
+    for(int tid = 0; tid < nref; tid++){
+        hts_idx_get_stat(alnFile->idx,tid,&mappedVec[tid],&unmapped);
+        total += mappedVec[tid];
+    }
+    double target = double(total) / double(nref);
+    std::vector<std::future<ReadVec_t>> futureVec;
+    for(int tid = 0; tid < nref; tid++){
+        hts_pos_t nPart = std::ceil(double(mappedVec[tid]) / target);
+        hts_pos_t refLen = sam_hdr_tid2len(alnFile->header,tid);
+        hts_pos_t nBases = std::ceil(double(refLen) / double(nPart));
+        for(int part = 0; part < nPart; part++){
+            hts_pos_t beg = part * nBases;
+            hts_pos_t end = (part+1) * nBases;
+            if(end > refLen) {end = refLen;}
+            auto future = threadPool.push(
+                    [&allowList_ptr,tid,&bamFName,beg,end](int id ) {
+                        return LoadReadsInRef(bamFName,tid,beg,end,allowList_ptr);
+                    } );
+            futureVec.push_back(std::move(future));
         }
     }
-    bam_destroy1(entry);
     close_samFile(alnFile);
+    double counter = 0;
+    int perc = 0;
+    for(auto & future : futureVec){
+        auto readVec = future.get();
+        readSet.insert(readVec.begin(),readVec.end());
+        double progress = (counter++)/double(futureVec.size());
+        if(100.0* progress > perc+1) {
+            perc = 100.0 * progress;
+            fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
+        }
+    }
     fprintf(stderr,"Loaded %lu reads\n",readSet.size());
     return readSet;
 }
+
+ReadVec_t LoadReadsInRef(const std::string & alnFileName,
+                            int tid, hts_pos_t beg, hts_pos_t end,
+                            const std::unordered_set<std::string> * allowList_ptr)
+{
+    ReadVec_t readVec;
+    open_samFile_t* alnFile = open_samFile(alnFileName.c_str(),false,true);
+    //hts_pos_t refLen = sam_hdr_tid2len(alnFile->header,tid);
+    hts_itr_t * itr = sam_itr_queryi(alnFile->idx,tid,beg,end);
+    bam1_t* entry = bam_init1();
+    while(sam_itr_next(alnFile->file,itr,entry) >= 0){
+        //If an allow list was provided, only keep reads in that allow list
+        if(!allowList_ptr || allowList_ptr->count(bam_get_qname(entry))){
+            readVec.push_back(std::make_shared<Read_t>(entry));
+        }
+    }
+    bam_destroy1(entry);
+    hts_itr_destroy(itr);
+    close_samFile(alnFile);
+    return readVec;
+}
+
+
 
 //Given a pair of files which contain the regions of interest, and the raw
 //  fasta sequences from which those sequences were drawn, extracts the info
@@ -1166,10 +1243,10 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
 }
 
 void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                std::ofstream & out)
+                std::ofstream & out, const ReadPairSet_t & used)
 {
     //Output the call
-    call_t call = ConstructCall(id, edge,alnMap);
+    call_t call = ConstructCall(id, edge,alnMap, used);
     out << call.to_string() << "\n"; 
 }
 
@@ -1309,9 +1386,12 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
     while(!edgeQueue.empty()){
         const Edge_t & edge = edgeQueue.top();
         if(PassesEffectiveReadCount(edge,&used)){
-            OutputEdgeCall(nextJunctionID,edge,alnMap,out);
+            //Output to the res file, bam files, and fasta files
+            OutputEdgeCall(nextJunctionID,edge,alnMap,out,used);
             OutputEdgeReads(nextJunctionID,edge,alnMap,readDir,used);
             OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
+            //Update the used Set
+            used.insert(edge.getSupport().begin(),edge.getSupport().end());
             nextJunctionID++;
             edgeQueue.pop();
         } else {
@@ -1320,12 +1400,12 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
             edgeQueue.cannabalize();
         }
         double progress = (start - edgeQueue.queueSize()) / double(start);
-        if(1000.0 * progress > pert){
+        if(1000.0 * progress > pert+1){
             pert = 1000 * progress;
             fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
         }
     }
-    fprintf(stderr,"\nOutput %d Edges...\n",nextJunctionID);
+    fprintf(stderr,"Output %d Edges...\n",nextJunctionID);
 }
 
 //Given an edge reports wheteher it has enough effective reads
@@ -1383,13 +1463,13 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
         future.get();
         complete++;
         double progress = complete / double(futureVec.size());
-        if(1000.0 * progress > pert){
+        if(1000.0 * progress > pert+1){
             pert = 1000 * progress;
             fprintf(stderr,"Progress: %0.1f%%\r",progress*100.0);
         }
     }
     FilterEdgeVec(edgeVec);
-    fprintf(stderr,"\nProcessed and retained %zu Edges\n",edgeVec.size());
+    fprintf(stderr,"Processed and retained %zu Edges\n",edgeVec.size());
 }
 
 //Recursivly processes prepared data describing the sequences of an edge
