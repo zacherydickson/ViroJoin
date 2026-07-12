@@ -431,7 +431,7 @@ bwa_cmd = ( f"{cmd_args.bwa} mem -t {cmd_args.threads} -K {BATCH_SIZE}"
             f" -h {MAX_XA} -Y {IS_OPT}"
             f" {cmd_args.host_and_virus_reference}"
             f" {path_dict['rfq1']} {path_dict['rfq2']} | "
-            f" {cmd_args.samtools} sort -n - >"
+            f" {cmd_args.samtools} sort -@ {cmd_args.threads} -n - >"
             f" {path_dict['rawBam']}"
             )
 if missing_file(path_dict["rawBam"]):
@@ -465,7 +465,7 @@ if missing_file(path_dict["hClip"]):
 collect_alignments_cmd = (  f"{cmd_args.samtools} merge -u -"
                             f" {PATH_DICT['fqSrtBam']}"
                             f" {path_dict['vClip']} {path_dict['hClip']} | "
-                            f" {cmd_args.samtools} sort -n - >|"
+                            f" {cmd_args.samtools} sort -@ {cmd_args.threads} -n - >|"
                             f" {PATH_DICT['allNSBam']}" )
 if missing_file(PATH_DICT["allNSBam"]):
     execute(collect_alignments_cmd)
