@@ -441,25 +441,25 @@ int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag){
     flag = 0;
     if(!aln) { return 1; } //Undefined aln object
     std::string alnName = bam_get_qname(aln);
+    qname = alnName;
     std::vector<std::string> nameParts = strsplit(alnName,'_');
-    qname = nameParts[0];
-    if(nameParts.size() > 1) {
-        for(size_t i = 1; i < nameParts.size() - 2; i++){
-            qname += "_" + nameParts[i];
-        }
-        char side = nameParts[nameParts.size() - 2][0];
-        char read = nameParts[nameParts.size() - 1][0];
-        if( (side == 'L' || side == 'R') &&
-            (read == '1' || read == '2')) 
-        { // Is clipped
-            flag |= ClippedCXA::IS_CLIPPED;
-            if(side == 'L'){ flag |= ClippedCXA::IS_LEFT; } //Set the left bit
-            if(read == '1'){ flag |= ClippedCXA::IS_R1; } //Set the R1 bit
-        } else {
-            qname += "_" + nameParts[nameParts.size() - 2];
-            qname += "_" + nameParts[nameParts.size() - 1];
-        }
+    if( nameParts.size() < 3) { return 0; } //Does not have clip formatting
+    char side = nameParts[nameParts.size() - 2][0];
+    char read = nameParts[nameParts.size() - 1][0];
+    if( !(side == 'L' || side == 'R') ||
+        !(read == '1' || read == '2') ) // Does not have clip formatting
+    {
+        return 0;
     }
+    //Has clip formatting
+    //Set q name by stripping off clip formatting
+    qname = nameParts[0];
+    for(size_t i = 1; i < nameParts.size() - 2; i++){
+        qname += "_" + nameParts[i];
+    }
+    flag |= ClippedCXA::IS_CLIPPED;
+    if(side == 'L'){ flag |= ClippedCXA::IS_LEFT; } //Set the left bit
+    if(read == '1'){ flag |= ClippedCXA::IS_R1; } //Set the R1 bit
     return 0;
 }
 
