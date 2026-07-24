@@ -118,9 +118,11 @@ def get_max_is_from_fq(workdir, fq1, fq2, reference, bwa_exec, threads):
             if len(general_dist) > GEN_DIST_SIZE: break
         
         if len(general_dist) == 0:
-            raise ValueError(f"None of the first {READS_TO_MAP} reads map to the joint genome - Could not
-                    estimate insert size parameters. Check the input files, input references, or provide
-                    parameters with the --isParams option")
+            raise ValueError(f"None of the first {READS_TO_MAP} reads map to"
+                             f" the joint genome - Could not estimate insert"
+                             f" size parameters."
+                             f" Check the input files, input references, or"
+                             f" provide parameters with the --isParams option")
         mean_is = int(mean(general_dist))
         higher_stddev_is = int(math.sqrt(mean([(x - mean_is) ** 2 for x in general_dist if x > mean_is])))
 
