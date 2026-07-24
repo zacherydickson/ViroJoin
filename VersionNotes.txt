@@ -58,3 +58,5 @@ Version 2.0.0
         and edges weighted by levels of support and agreement (enabled via command line option)
 Version 2.0.1
 	Updated default maxAltAln to 20
+Version 2.0.2
+	Improved error message if no reads map during insert size estimation
