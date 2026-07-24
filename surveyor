@@ -327,10 +327,14 @@ if cmd_args.isParams is not None:
         with open(path_dict["stats"], "w", encoding="utf-8") as stat_file:
             stat_file.write(f"max_is {max_is}\n")
 elif missing_file(path_dict["stats"]):
-    max_read_len, max_is = \
-        max_is_calc.get_max_is_from_fq(cmd_args.workdir, cmd_args.fq1, \
-        cmd_args.fq2, cmd_args.host_and_virus_reference, cmd_args.bwa, \
-        cmd_args.threads)
+    try:
+        max_read_len, max_is = \
+            max_is_calc.get_max_is_from_fq(cmd_args.workdir, cmd_args.fq1, \
+            cmd_args.fq2, cmd_args.host_and_virus_reference, cmd_args.bwa, \
+            cmd_args.threads)
+    except ValueError as ex:
+        eprint(f"[ERROR] {ex}")
+        sys.exit(1)
     if max_is > cmd_args.max_is_upper_bound:
         max_is = cmd_args.max_is_upper_bound
     with open(path_dict["stats"], "w", encoding="utf-8") as stat_file:
