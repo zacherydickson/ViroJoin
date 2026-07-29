@@ -33,6 +33,14 @@ struct RRLabelAssoc_t {
     uint16_t flag;
 }; 
 
+struct AlignmentTableRow_t {
+    ReadPair_pt label;
+    std::string seq;
+    size_t nFill;
+};
+
+typedef std::vector<AlignmentTableRow_t> AlignmentTable_t;
+
 //CBranchedQueue defined in BranchedQueue.hpp
 
 using CBranchedEdgeQueue = CBranchedQueue<Edge_t,ReadPair_pt,ReadPairSet_t,AlignmentMap_t>;
@@ -66,6 +74,8 @@ void AlignReads(const Read2RegionsMap_t &regMap,
 bool AreConsistentCigars(   std::vector<uint32_t> vec1,
                             std::vector<uint32_t> vec2,
                             bool bFromBack);
+AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
+                                        const AlignmentMap_t & alnMap);
 EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
                                 const AlignmentMap_t & alnMap);
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
@@ -96,7 +106,9 @@ void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap);
 template<class T>
 void FilterVector(  std::vector<T> & vec,
                     const std::unordered_set<size_t> & idxSet);
-std::string GenerateConsensus(const std::vector<std::string> & rowVec,
+//std::string GenerateConsensus(const std::vector<std::string> & rowVec,
+//                                std::vector<size_t> * diffVec = nullptr);
+std::string GenerateConsensus(const AlignmentTable_t & alnTable,
                                 std::vector<size_t> * diffVec = nullptr);
 std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
                                 const AlignmentMap_t & alnMap, size_t & nFill);
@@ -136,6 +148,8 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
 EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
                         std::vector<std::string> rowSeqVec,
                         std::vector<size_t> nFillVec);
+EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
+                                std::vector<AlignmentTableRow_t> alnTable);
 void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
@@ -419,6 +433,23 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
     return true;
 }
 
+
+AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
+                                        const AlignmentMap_t & alnMap)
+{
+    //Build the Table of aligned sequences
+    AlignmentTable_t alignmentTable;
+    //To track which rows are still be processed
+    for(const ReadPair_pt & rp : edge.getSupport()){
+        AlignmentTableRow_t tableRow;
+        tableRow.label = rp;
+        tableRow.nFill = 0;
+        tableRow.seq = GetAlignedSequence(edge,rp,alnMap,tableRow.nFill);
+        alignmentTable.push_back(tableRow);
+    }
+    return alignmentTable;
+}
+
 //Splits an edge into a number of edges for each unique consensus
 //sequence of reads observed
 //Inputs - an edge to process
@@ -428,18 +459,8 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
 EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
                                 const AlignmentMap_t & alnMap)
 {
-    //Build the Table of aligned sequences
-    std::vector<ReadPair_pt> rowLabelVec;
-    std::vector<std::string> rowSeqVec;
-    std::vector<size_t> nFillVec;
-    //To track which rows are still be processed
-    for(const ReadPair_pt & rp : edge.getSupport()){
-        rowLabelVec.push_back(rp);
-        nFillVec.push_back(0);
-        rowSeqVec.push_back(GetAlignedSequence( edge,rp,alnMap,
-                                                nFillVec.back()));
-    }
-    return RecursiveSplitEdge(edge,rowLabelVec,rowSeqVec,nFillVec); 
+    AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
+    return RecursiveSplitEdge(edge,alnTable);//,rowLabelVec,rowSeqVec,nFillVec); 
 }
 
 
@@ -908,6 +929,50 @@ void FilterVector(  std::vector<T> & vec,
     }
 }
 
+////Given a vecotr of strings (all assumed to be the same length) construct
+////a majority rule consensus string
+////Also record the number of differences from the generated consensus for
+////each string
+////Inputs - a vector of strings
+////         - a reference to a vector of size_t, will be scaled to rowVec
+////         Size, and will contain the # of sites which differ from the
+////         conensus for each row
+////Output - a majority rule consensus sequence
+//std::string GenerateConsensus(const std::vector<std::string> & rowVec,
+//                                std::vector<size_t> * diffVec)
+//{
+//    
+//    if(!rowVec.size()) return std::string();
+//    if(diffVec) diffVec->assign(rowVec.size(),0);
+//    std::string cons(rowVec.front().length(),'N');
+//    size_t nCol = rowVec[0].length();
+//    for(size_t col = 0; col < nCol; col++){
+//        std::unordered_map<char,size_t> nucCount;
+//        size_t max = 0;
+//        char best = 'N';
+//        //Iterate to determine consensus residue
+//        for(const std::string & seq : rowVec){
+//            char nuc = seq.at(col);
+//            size_t count = ++nucCount[nuc];
+//            if(count > max && nuc != 'N'){
+//                best = nuc;
+//                max = count;
+//            }
+//        }
+//        cons[col] = best;
+//        if(diffVec) {
+//            //Iterate to count differences from consensus
+//            for(size_t row = 0; row < rowVec.size(); row++){
+//                char nuc = rowVec.at(row).at(col);
+//                if(nuc != best && nuc != 'N'){
+//                    (*diffVec)[row]++;
+//                }
+//            }
+//        }
+//    }
+//    return cons;
+//}
+
 //Given a vecotr of strings (all assumed to be the same length) construct
 //a majority rule consensus string
 //Also record the number of differences from the generated consensus for
@@ -917,20 +982,20 @@ void FilterVector(  std::vector<T> & vec,
 //         Size, and will contain the # of sites which differ from the
 //         conensus for each row
 //Output - a majority rule consensus sequence
-std::string GenerateConsensus(const std::vector<std::string> & rowVec,
+std::string GenerateConsensus(const AlignmentTable_t & alnTable,
                                 std::vector<size_t> * diffVec)
 {
-    
-    if(!rowVec.size()) return std::string();
-    if(diffVec) diffVec->assign(rowVec.size(),0);
-    std::string cons(rowVec.front().length(),'N');
-    size_t nCol = rowVec[0].length();
+    if(!alnTable.size()) return std::string();
+    if(diffVec) diffVec->assign(alnTable.size(),0);
+    size_t nCol = alnTable.front().seq.length();
+    std::string cons(nCol,'N');
     for(size_t col = 0; col < nCol; col++){
         std::unordered_map<char,size_t> nucCount;
         size_t max = 0;
         char best = 'N';
         //Iterate to determine consensus residue
-        for(const std::string & seq : rowVec){
+        for(const AlignmentTableRow_t & row : alnTable){
+            const std::string & seq = row.seq;
             char nuc = seq.at(col);
             size_t count = ++nucCount[nuc];
             if(count > max && nuc != 'N'){
@@ -941,8 +1006,8 @@ std::string GenerateConsensus(const std::vector<std::string> & rowVec,
         cons[col] = best;
         if(diffVec) {
             //Iterate to count differences from consensus
-            for(size_t row = 0; row < rowVec.size(); row++){
-                char nuc = rowVec.at(row).at(col);
+            for(size_t row = 0; row < alnTable.size(); row++){
+                char nuc = alnTable.at(row).seq.at(col);
                 if(nuc != best && nuc != 'N'){
                     (*diffVec)[row]++;
                 }
@@ -1327,16 +1392,8 @@ void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
                     const ReadPairSet_t & used)
 {
     //Build the Table of aligned sequences
-    std::vector<std::string> rowSeqVec;
-    std::vector<size_t> nFillVec;
-    //To track which rows are still be processed
-    for(const ReadPair_pt & frag : edge.getSupport()){
-        if(used.count(frag)) continue; //Ignore used reads
-        nFillVec.push_back(0);
-        rowSeqVec.push_back(GetAlignedSequence( edge,frag,alnMap,
-                                                nFillVec.back()));
-    }
-    std::string consensus = GenerateConsensus(rowSeqVec);
+    AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
+    std::string consensus = GenerateConsensus(alnTable);
     //Split the consensus and strip off leading and trailing N's
     std::regex rgx("^N+|N+$");
     std::string hostSeq = std::regex_replace(
@@ -1472,6 +1529,70 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
     fprintf(stderr,"Processed and retained %zu Edges\n",edgeVec.size());
 }
 
+////Recursivly processes prepared data describing the sequences of an edge
+////First a consensus sequence is generated for the edge
+////then all reads which are too different from the consensus (adjusted for
+////the length of the read) are identified
+////These reads are removed fromt he parent edge and moved to a child edge
+////Additionally any reads from the parent edge which are completely
+////consistent with any of the discarded reads are also included
+////Overall this allows the potential for multiple alleles of junctions
+////Any child edges with too fiew reads are ignored
+////Continues until no valid child edge is made
+////Inputs - an edge to process
+////         - a vector of the reads in the edge
+////         - a vector of the aligned sequences of the reads
+////         - a vector of the aligned length of the reads
+////         - a reference to a vector of edges in which to store new edges
+////Output - None, modifies all inputs
+//EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
+//                        std::vector<std::string> rowSeqVec,
+//                        std::vector<size_t> nFillVec)
+//{
+//    size_t nRowIn = rowLabelVec.size();
+//    std::vector<size_t> diffCount;
+//    GenerateConsensus(rowSeqVec,&diffCount);
+//    std::unique_ptr<Edge_t> newEdge_p(nullptr);
+//    std::unordered_set<size_t> roiSet;
+//    for(size_t a = 0; a < rowSeqVec.size(); a++){
+//        //Calculate the # of diffs per defined site
+//        double diffRate = double(diffCount[a]) / double(nFillVec[a]);
+//        if(diffRate < MaxDiffRate) continue;
+//        if(!newEdge_p){
+//            newEdge_p = std::make_unique<Edge_t>(edge.hostRegion,edge.virusRegion);
+//            newEdge_p->id = edge.id;
+//        }
+//        //Move the fragment to the new edge
+//        edge.transferSupport(rowLabelVec[a],*newEdge_p);
+//        roiSet.insert(a);
+//        //Any reads consistent with this read will be included
+//        for(size_t b = a + 1; b < rowSeqVec.size(); b++){
+//            if(!IsConsistent(rowSeqVec[a],rowSeqVec[b])) continue;
+//            edge.transferSupport(rowLabelVec[b],*newEdge_p,false);
+//            roiSet.insert(b);
+//        }
+//    }
+//    //We are done if no new edge was created
+//    if(!newEdge_p) return EdgeVec_t();
+//    //We are also done if the new edge is too small
+//    if(!PassesEffectiveReadCount(*newEdge_p)){
+//        return EdgeVec_t();
+//    }
+//    //Reduce the vectors to only the rows of interest for the new edge
+//    FilterVector(rowLabelVec,roiSet); 
+//    FilterVector(rowSeqVec,roiSet); 
+//    FilterVector(nFillVec,roiSet); 
+//    //Prevent infinite recursion by requiring that the recursion stops if
+//    //the next round isn't smaller
+//    if(rowLabelVec.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
+//    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,rowLabelVec,rowSeqVec,nFillVec);
+//    //Check if the splitting process left the created edge large enough
+//    if(PassesEffectiveReadCount(*newEdge_p)){
+//        res.insert(res.begin(),*newEdge_p);
+//    }
+//    return res;
+//}
+
 //Recursivly processes prepared data describing the sequences of an edge
 //First a consensus sequence is generated for the edge
 //then all reads which are too different from the consensus (adjusted for
@@ -1488,30 +1609,31 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //         - a vector of the aligned length of the reads
 //         - a reference to a vector of edges in which to store new edges
 //Output - None, modifies all inputs
-EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
-                        std::vector<std::string> rowSeqVec,
-                        std::vector<size_t> nFillVec)
+EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
+                                AlignmentTable_t alnTable)
 {
-    size_t nRowIn = rowLabelVec.size();
+    size_t nRowIn = alnTable.size();
     std::vector<size_t> diffCount;
-    GenerateConsensus(rowSeqVec,&diffCount);
+    GenerateConsensus(alnTable,&diffCount);
     std::unique_ptr<Edge_t> newEdge_p(nullptr);
     std::unordered_set<size_t> roiSet;
-    for(size_t a = 0; a < rowSeqVec.size(); a++){
+    for(size_t a = 0; a < alnTable.size(); a++){
+        const AlignmentTableRow_t & rowA = alnTable[a];
         //Calculate the # of diffs per defined site
-        double diffRate = double(diffCount[a]) / double(nFillVec[a]);
+        double diffRate = double(diffCount[a]) / double(rowA.nFill);
         if(diffRate < MaxDiffRate) continue;
         if(!newEdge_p){
             newEdge_p = std::make_unique<Edge_t>(edge.hostRegion,edge.virusRegion);
             newEdge_p->id = edge.id;
         }
         //Move the fragment to the new edge
-        edge.transferSupport(rowLabelVec[a],*newEdge_p);
+        edge.transferSupport(rowA.label,*newEdge_p);
         roiSet.insert(a);
         //Any reads consistent with this read will be included
-        for(size_t b = a + 1; b < rowSeqVec.size(); b++){
-            if(!IsConsistent(rowSeqVec[a],rowSeqVec[b])) continue;
-            edge.transferSupport(rowLabelVec[b],*newEdge_p,false);
+        for(size_t b = a + 1; b < alnTable.size(); b++){
+            const AlignmentTableRow_t & rowB = alnTable[b];
+            if(!IsConsistent(rowA.seq,rowB.seq)) continue;
+            edge.shareSupport(rowB.label,*newEdge_p);
             roiSet.insert(b);
         }
     }
@@ -1522,13 +1644,11 @@ EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec
         return EdgeVec_t();
     }
     //Reduce the vectors to only the rows of interest for the new edge
-    FilterVector(rowLabelVec,roiSet); 
-    FilterVector(rowSeqVec,roiSet); 
-    FilterVector(nFillVec,roiSet); 
+    FilterVector(alnTable,roiSet); 
     //Prevent infinite recursion by requiring that the recursion stops if
     //the next round isn't smaller
-    if(rowLabelVec.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
-    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,rowLabelVec,rowSeqVec,nFillVec);
+    if(alnTable.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
+    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,alnTable);
     //Check if the splitting process left the created edge large enough
     if(PassesEffectiveReadCount(*newEdge_p)){
         res.insert(res.begin(),*newEdge_p);
