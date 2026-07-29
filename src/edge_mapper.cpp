@@ -458,7 +458,7 @@ EdgeVec_t BreakpointSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap) {
             pair.second.hostProximal < pair.second.hostDistal,
             pair.second.virusProximal < pair.second.virusDistal,
             pair.second.hostProximal,
-            pair.second.hostDistal
+            pair.second.virusProximal
         };
         bppVec.push_back(bpp);
     }
