@@ -499,7 +499,14 @@ struct Edge_t {
     bool addSupport(const ReadPair_pt & frag, const AlignmentMap_t & alnMap){
         return addSupport(frag,this->getRPAlnSummary(frag,alnMap));
     }
-    bool transferSupport(const ReadPair_pt & frag, Edge_t & other,bool bRemove = true){
+    bool shareSupport(const ReadPair_pt & frag, Edge_t & other) {
+        return this->distributeSupport(frag,other,false);
+    }
+    bool transferSupport(const ReadPair_pt & frag, Edge_t & other) {
+        return this->distributeSupport(frag,other,true);
+    }
+    protected:
+    bool distributeSupport(const ReadPair_pt & frag, Edge_t & other,bool bRemove = true){
         //Cannot transfer support an edge does not have
         if(!this->supportSet.count(frag)) { return false; }
         //Cannot transfer support to an edge with different regions
@@ -516,6 +523,7 @@ struct Edge_t {
         }
         return retVal;
     }
+    public:
     static bool AlignmentIsSplit(   bool opensLeft,
                                     const StripedSmithWaterman::Alignment & aln)
     {
