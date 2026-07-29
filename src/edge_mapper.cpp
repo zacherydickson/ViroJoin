@@ -289,8 +289,6 @@ int main(int argc, const char* argv[]) {
     ////## Edge Processing
     OrderEdges(edgeVec,alnMap);
     ////## Output
-    //TODO: FIXME: The same readpair has been found supporting multiple breakpoints
-    //      This is unacceptable
     OutputEdgesByQ(edgeVec,alnMap,readNameMap,res_file_name,reads_dir,
                 hostbp_file_name,virusbp_file_name);
     ////## Cleanup
@@ -897,7 +895,6 @@ void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
 //Output - None, modifies the edge object
 void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
     ReadPairSet_t toRemoveSet;
-    std::pair<size_t,size_t> offsets = edge.getOffsets();
     //First pass to id strictly nested alignments
     for(const auto & pair : edge.getSupportSummaryMap()) {
         const ReadPair_pt & frag = pair.first;
@@ -909,6 +906,7 @@ void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap) {
         }
     }
     //Second pass to id reads with split position too far
+    std::pair<size_t,size_t> offsets = edge.getOffsets();
     for(const Region_pt & reg : {edge.hostRegion,edge.virusRegion}){
         long int curOffset =  (reg == edge.hostRegion) ?
                               offsets.first : offsets.second;
@@ -1310,13 +1308,24 @@ RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
 //Output - None, modifies the edge vector
 void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     fprintf(stderr,"Ordering Edges ...\n");
-    EdgeVec_t newEdges = SplitEdges(edgeVec,alnMap,&ConsensusSplitEdge); 
+    EdgeVec_t newEdges;
+    //Split On Consensus
+    newEdges= SplitEdges(edgeVec,alnMap,&ConsensusSplitEdge); 
     //Eliminate Edges with low read counts
     FilterEdgeVec(edgeVec);
     //Add any new edges back in (these are already filtered)
     edgeVec.insert(edgeVec.end(),newEdges.begin(),newEdges.end());
+
     ////Process all edges
     ProcessEdges(edgeVec,alnMap);
+
+    ////Split On Breakpoint Position
+    //newEdges = SplitEdges(edgeVec,alnMap,&BreakpointSplitEdge); 
+    ////Eliminate Edges with low read counts
+    //FilterEdgeVec(edgeVec);
+    ////Add any new edges back in (these are already filtered)
+    //edgeVec.insert(edgeVec.end(),newEdges.begin(),newEdges.end());
+
     //Remove insufficiently supported Edges
     //Find the edges which are unique to a particular edge
     ReadPairSet_t used; //Sort Edge Needs an object to work with
@@ -1733,6 +1742,7 @@ EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
 {
     std::string basis = "unknown";
     if(edgeSplitter == &ConsensusSplitEdge){ basis = "consensus sequences"; }
+    if(edgeSplitter == &BreakpointSplitEdge){ basis = "breakpoint positions"; }
     fprintf(stderr,"Splitting Edges based on %s ...\n",basis.c_str());
     //Multithreaded
     ctpl::thread_pool threadPool (Config.threads);
