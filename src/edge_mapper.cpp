@@ -144,11 +144,14 @@ bool PassesEffectiveReadCount(  const Edge_t & edge,
                                 const ReadPairSet_t * used = nullptr);
 void ProcessEdge(int id,Edge_t & edge, const AlignmentMap_t & alnMap);
 void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
-EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
-                        std::vector<std::string> rowSeqVec,
-                        std::vector<size_t> nFillVec);
+//EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
+//                        std::vector<std::string> rowSeqVec,
+//                        std::vector<size_t> nFillVec);
 EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
-                                std::vector<AlignmentTableRow_t> alnTable);
+                                std::vector<AlignmentTableRow_t> alnTable,
+                                std::vector<bool> (*globalTest)(const AlignmentTable_t &),
+                                bool (*pairwiseTest)(const AlignmentTableRow_t &, const AlignmentTableRow_t &)
+                                );
 void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
@@ -462,7 +465,7 @@ EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
                                 const AlignmentMap_t & alnMap)
 {
     AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
-    return RecursiveSplitEdge(edge,alnTable);//,rowLabelVec,rowSeqVec,nFillVec); 
+    return RecursiveSplitEdge(edge,alnTable,&TestConsistencyGlobal,&TestConsistencyPairwise);//,rowLabelVec,rowSeqVec,nFillVec); 
 }
 
 
@@ -1598,10 +1601,13 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //         - a reference to a vector of edges in which to store new edges
 //Output - None, modifies all inputs
 EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
-                                AlignmentTable_t alnTable)
+                                AlignmentTable_t alnTable,
+                                std::vector<bool> (*globalTest)(const AlignmentTable_t &),
+                                bool (*pairwiseTest)(const AlignmentTableRow_t &, const AlignmentTableRow_t &)
+                                )
 {
     size_t nRowIn = alnTable.size();
-    std::vector<bool> rowConsisVec = TestConsistencyGlobal(alnTable);
+    std::vector<bool> rowConsisVec = globalTest(alnTable);
     std::unique_ptr<Edge_t> newEdge_p(nullptr);
     std::unordered_set<size_t> roiSet;
     for(size_t a = 0; a < alnTable.size(); a++){
@@ -1618,7 +1624,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
         //Any reads consistent with this read will be included
         for(size_t b = a + 1; b < alnTable.size(); b++){
             const AlignmentTableRow_t & rowB = alnTable[b];
-            if(!TestConsistencyPairwise(rowA,rowB)) continue;
+            if(!pairwiseTest(rowA,rowB)) continue;
             edge.shareSupport(rowB.label,*newEdge_p);
             roiSet.insert(b);
         }
@@ -1634,7 +1640,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
     //Prevent infinite recursion by requiring that the recursion stops if
     //the next round isn't smaller
     if(alnTable.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
-    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,alnTable);
+    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,alnTable,globalTest,pairwiseTest);
     //Check if the splitting process left the created edge large enough
     if(PassesEffectiveReadCount(*newEdge_p)){
         res.insert(res.begin(),*newEdge_p);
