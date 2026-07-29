@@ -76,8 +76,7 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
                             bool bFromBack);
 AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
                                         const AlignmentMap_t & alnMap);
-EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
-                                const AlignmentMap_t & alnMap);
+EdgeVec_t ConsensusSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap);
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
                         bool isSupplemental,
                         const Read_pt & mate, const Region_pt & mateSubject, 
@@ -156,7 +155,8 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
 void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
-EdgeVec_t SplitEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
+EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
+                        EdgeVec_t (*edgeSplitter)(Edge_t &, const AlignmentMap_t &));
 std::vector<bool> TestConsistencyGlobal( const AlignmentTable_t & alnTable);
 bool TestConsistencyPairwise( const AlignmentTableRow_t & a,
                               const AlignmentTableRow_t & b);
@@ -462,9 +462,7 @@ AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
 //         - an alignment map
 //         - a vector in which to store newly created edges
 //Output - None, modifies the newEdges vector and edge object
-EdgeVec_t ConsensusSplitEdge(   int id, Edge_t & edge,
-                                const AlignmentMap_t & alnMap)
-{
+EdgeVec_t ConsensusSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap) {
     AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
     return RecursiveSplitEdge(edge,alnTable,&TestConsistencyGlobal,&TestConsistencyPairwise);//,rowLabelVec,rowSeqVec,nFillVec); 
 }
@@ -1285,7 +1283,7 @@ RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
 //Output - None, modifies the edge vector
 void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     fprintf(stderr,"Ordering Edges ...\n");
-    EdgeVec_t newEdges = SplitEdges(edgeVec,alnMap); 
+    EdgeVec_t newEdges = SplitEdges(edgeVec,alnMap,&ConsensusSplitEdge); 
     //Eliminate Edges with low read counts
     FilterEdgeVec(edgeVec);
     //Add any new edges back in (these are already filtered)
@@ -1702,14 +1700,19 @@ void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
 //Inputs - a vector of edges
 //         - an alignment map
 //Output - a vector of new edges, also modifies the edges in the input vecto
-EdgeVec_t SplitEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
+//
+EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
+                        EdgeVec_t (*edgeSplitter)(Edge_t &, const AlignmentMap_t &))
+{
     fprintf(stderr,"Splitting Edges based on consensus sequences ...\n");
     //Multithreaded
     ctpl::thread_pool threadPool (Config.threads);
     std::vector<std::future<EdgeVec_t>> futureVec;
     for( Edge_t & edge : edgeVec){
-        auto future = threadPool.push(  ConsensusSplitEdge,std::ref(edge),
-                                        std::cref(alnMap));
+        auto future = threadPool.push(
+                [edgeSplitter,&edge,&alnMap] (int id) {
+                    return edgeSplitter(edge,alnMap);
+                } );
         futureVec.push_back(std::move(future));
     }
     EdgeVec_t newEdges;
