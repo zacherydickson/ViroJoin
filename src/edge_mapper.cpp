@@ -67,8 +67,6 @@ std::mutex Mtx;
 
 //==== FUNCTION DECLARATIONS
 
-std::vector<bool> AlignmentTableRowsAreConsistent(
-                        const AlignmentTable_t & alnTable);
 void AlignRead( int id, const Read_pt & read, const RegionSet_t & regSet,
                 AlignmentMap_t & alnMap);
 void AlignReads(const Read2RegionsMap_t &regMap,
@@ -114,7 +112,6 @@ std::string GenerateConsensus(const AlignmentTable_t & alnTable,
                                 std::vector<size_t> * diffVec = nullptr);
 std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
                                 const AlignmentMap_t & alnMap, size_t & nFill);
-bool IsConsistent(const std::string & seq1, const std::string & seq2);
 EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
                     const Name2ReadPairMap_t & rpMap,
                     const RegID2RegionMap_t & regMap,
@@ -156,6 +153,9 @@ void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                     const ReadPairSet_t & used);
 EdgeVec_t SplitEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
+std::vector<bool> TestConsistencyGlobal( const AlignmentTable_t & alnTable);
+bool TestConsistencyPairwise( const AlignmentTableRow_t & a,
+                              const AlignmentTableRow_t & b);
 
 //==== MAIN
 
@@ -1058,20 +1058,6 @@ std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
 }
 
 
-//Given two partial DNA sequences tests if the two have consistent
-//sequences: that is they match at all non-N positions
-//Inputs - two strings representing the two sequences
-//Output - a boolean of whether they are consistent or not
-bool IsConsistent(const std::string & seq1, const std::string & seq2){
-    if(seq1.length() != seq2.length()) return false; 
-    for(size_t i = 0; i < seq1.length(); i++){
-        char c1 = seq1.at(i);
-        char c2 = seq2.at(i);
-        if(c1 != c2 && c1 != 'N' && c1 != 'N') return false;
-    }
-    return true;
-}
-
 //Given paths to the edge and fragment edge associations as well as a mapping from fragment names to 
 //  ReadPair objects, construct a vector of Edges
 //Inputs - a path to a tab delim file with edge ids, and region ids
@@ -1595,22 +1581,6 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //    return res;
 //}
 
-std::vector<bool> AlignmentTableRowsAreConsistent(
-                    const AlignmentTable_t & alnTable)
-{
-    std::vector<bool> resVec;
-    std::vector<size_t> diffCount;
-    GenerateConsensus(alnTable,&diffCount);
-    for(size_t a = 0; a < alnTable.size(); a++){
-        const AlignmentTableRow_t & rowA = alnTable[a];
-        //Calculate the # of diffs per defined site
-        double diffRate = double(diffCount[a]) / double(rowA.nFill);
-        bool bRes = (diffRate < MaxDiffRate) ? true : false;
-        resVec.push_back(bRes); 
-    }
-    return resVec;
-}
-
 //Recursivly processes prepared data describing the sequences of an edge
 //First a consensus sequence is generated for the edge
 //then all reads which are too different from the consensus (adjusted for
@@ -1631,7 +1601,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
                                 AlignmentTable_t alnTable)
 {
     size_t nRowIn = alnTable.size();
-    std::vector<bool> rowConsisVec = AlignmentTableRowsAreConsistent(alnTable);
+    std::vector<bool> rowConsisVec = TestConsistencyGlobal(alnTable);
     std::unique_ptr<Edge_t> newEdge_p(nullptr);
     std::unordered_set<size_t> roiSet;
     for(size_t a = 0; a < alnTable.size(); a++){
@@ -1648,7 +1618,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
         //Any reads consistent with this read will be included
         for(size_t b = a + 1; b < alnTable.size(); b++){
             const AlignmentTableRow_t & rowB = alnTable[b];
-            if(!IsConsistent(rowA.seq,rowB.seq)) continue;
+            if(!TestConsistencyPairwise(rowA,rowB)) continue;
             edge.shareSupport(rowB.label,*newEdge_p);
             roiSet.insert(b);
         }
@@ -1748,6 +1718,42 @@ EdgeVec_t SplitEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
     return newEdges;
 }
 
+//Specialized function for testing whether all rows in an aignment table are consistent with
+// the consensus of that alignment table
+//Inputs - a vector of alignment table rows (cref)
+//Output - a vector of boolean results (one for each row), true if consistent 
+std::vector<bool> TestConsistencyGlobal (
+                    const AlignmentTable_t & alnTable)
+{
+    std::vector<bool> resVec;
+    std::vector<size_t> diffCount;
+    GenerateConsensus(alnTable,&diffCount);
+    for(size_t a = 0; a < alnTable.size(); a++){
+        const AlignmentTableRow_t & rowA = alnTable[a];
+        //Calculate the # of diffs per defined site
+        double diffRate = double(diffCount[a]) / double(rowA.nFill);
+        bool bRes = (diffRate < MaxDiffRate) ? true : false;
+        resVec.push_back(bRes); 
+    }
+    return resVec;
+}
+
+
+//Given two partial DNA sequences tests if the two have consistent
+//sequences: that is they match at all non-N positions
+//Inputs - two strings representing the two sequences
+//Output - a boolean of whether they are consistent or not
+bool TestConsistencyPairwise(const AlignmentTableRow_t & a, const AlignmentTableRow_t & b){
+    const std::string & seq1 = a.seq;
+    const std::string & seq2 = b.seq;
+    if(seq1.length() != seq2.length()) return false; 
+    for(size_t i = 0; i < seq1.length(); i++){
+        char c1 = seq1.at(i);
+        char c2 = seq2.at(i);
+        if(c1 != c2 && c1 != 'N' && c1 != 'N') return false;
+    }
+    return true;
+}
 
 
 
