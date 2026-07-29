@@ -147,10 +147,11 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
 //EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
 //                        std::vector<std::string> rowSeqVec,
 //                        std::vector<size_t> nFillVec);
+template<class T>
 EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
-                                std::vector<AlignmentTableRow_t> alnTable,
-                                std::vector<bool> (*globalTest)(const AlignmentTable_t &),
-                                bool (*pairwiseTest)(const AlignmentTableRow_t &, const AlignmentTableRow_t &)
+                                std::vector<T> vec,
+                                std::vector<bool> (*globalTest)(const std::vector<T> &),
+                                bool (*pairwiseTest)(const T &, const T &)
                                 );
 void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
@@ -1600,18 +1601,20 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //         - a vector of the aligned length of the reads
 //         - a reference to a vector of edges in which to store new edges
 //Output - None, modifies all inputs
+template<class T>
 EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
-                                AlignmentTable_t alnTable,
-                                std::vector<bool> (*globalTest)(const AlignmentTable_t &),
-                                bool (*pairwiseTest)(const AlignmentTableRow_t &, const AlignmentTableRow_t &)
+                                std::vector<T> vec,
+                                std::vector<bool> (*globalTest)(const std::vector<T> &),
+                                bool (*pairwiseTest)(const T &, const T &)
                                 )
+
 {
-    size_t nRowIn = alnTable.size();
-    std::vector<bool> rowConsisVec = globalTest(alnTable);
+    size_t nRowIn = vec.size();
+    std::vector<bool> rowConsisVec = globalTest(vec);
     std::unique_ptr<Edge_t> newEdge_p(nullptr);
     std::unordered_set<size_t> roiSet;
-    for(size_t a = 0; a < alnTable.size(); a++){
-        const AlignmentTableRow_t & rowA = alnTable[a];
+    for(size_t a = 0; a < vec.size(); a++){
+        const T & rowA = vec[a];
         bool bConsistent = rowConsisVec[a];
         if(bConsistent) continue;
         if(!newEdge_p){
@@ -1622,8 +1625,8 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
         edge.transferSupport(rowA.label,*newEdge_p);
         roiSet.insert(a);
         //Any reads consistent with this read will be included
-        for(size_t b = a + 1; b < alnTable.size(); b++){
-            const AlignmentTableRow_t & rowB = alnTable[b];
+        for(size_t b = a + 1; b < vec.size(); b++){
+            const T & rowB = vec[b];
             if(!pairwiseTest(rowA,rowB)) continue;
             edge.shareSupport(rowB.label,*newEdge_p);
             roiSet.insert(b);
@@ -1636,11 +1639,11 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
         return EdgeVec_t();
     }
     //Reduce the vectors to only the rows of interest for the new edge
-    FilterVector(alnTable,roiSet); 
+    FilterVector(vec,roiSet); 
     //Prevent infinite recursion by requiring that the recursion stops if
     //the next round isn't smaller
-    if(alnTable.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
-    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,alnTable,globalTest,pairwiseTest);
+    if(vec.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
+    EdgeVec_t res = RecursiveSplitEdge(*newEdge_p,vec,globalTest,pairwiseTest);
     //Check if the splitting process left the created edge large enough
     if(PassesEffectiveReadCount(*newEdge_p)){
         res.insert(res.begin(),*newEdge_p);
