@@ -67,6 +67,8 @@ std::mutex Mtx;
 
 //==== FUNCTION DECLARATIONS
 
+std::vector<bool> AlignmentTableRowsAreConsistent(
+                        const AlignmentTable_t & alnTable);
 void AlignRead( int id, const Read_pt & read, const RegionSet_t & regSet,
                 AlignmentMap_t & alnMap);
 void AlignReads(const Read2RegionsMap_t &regMap,
@@ -1593,6 +1595,22 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //    return res;
 //}
 
+std::vector<bool> AlignmentTableRowsAreConsistent(
+                    const AlignmentTable_t & alnTable)
+{
+    std::vector<bool> resVec;
+    std::vector<size_t> diffCount;
+    GenerateConsensus(alnTable,&diffCount);
+    for(size_t a = 0; a < alnTable.size(); a++){
+        const AlignmentTableRow_t & rowA = alnTable[a];
+        //Calculate the # of diffs per defined site
+        double diffRate = double(diffCount[a]) / double(rowA.nFill);
+        bool bRes = (diffRate < MaxDiffRate) ? true : false;
+        resVec.push_back(bRes); 
+    }
+    return resVec;
+}
+
 //Recursivly processes prepared data describing the sequences of an edge
 //First a consensus sequence is generated for the edge
 //then all reads which are too different from the consensus (adjusted for
@@ -1613,15 +1631,13 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
                                 AlignmentTable_t alnTable)
 {
     size_t nRowIn = alnTable.size();
-    std::vector<size_t> diffCount;
-    GenerateConsensus(alnTable,&diffCount);
+    std::vector<bool> rowConsisVec = AlignmentTableRowsAreConsistent(alnTable);
     std::unique_ptr<Edge_t> newEdge_p(nullptr);
     std::unordered_set<size_t> roiSet;
     for(size_t a = 0; a < alnTable.size(); a++){
         const AlignmentTableRow_t & rowA = alnTable[a];
-        //Calculate the # of diffs per defined site
-        double diffRate = double(diffCount[a]) / double(rowA.nFill);
-        if(diffRate < MaxDiffRate) continue;
+        bool bConsistent = rowConsisVec[a];
+        if(bConsistent) continue;
         if(!newEdge_p){
             newEdge_p = std::make_unique<Edge_t>(edge.hostRegion,edge.virusRegion);
             newEdge_p->id = edge.id;
