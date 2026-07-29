@@ -33,6 +33,14 @@ struct RRLabelAssoc_t {
     uint16_t flag;
 }; 
 
+struct BreakpointPair_t {
+    ReadPair_pt label;
+    bool isSplit, hostOpensLeft, virusOpensLeft;
+    int32_t hostProximal, virusProximal;
+};
+
+typedef std::vector<BreakpointPair_t> BreakpointPairVec_t;
+
 struct AlignmentTableRow_t {
     ReadPair_pt label;
     std::string seq;
@@ -158,8 +166,11 @@ void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
 EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                         EdgeVec_t (*edgeSplitter)(Edge_t &, const AlignmentMap_t &));
 std::vector<bool> TestConsistencyGlobal( const AlignmentTable_t & alnTable);
+std::vector<bool> TestConsistencyGlobal( const BreakpointPairVec_t & bppVec);
 bool TestConsistencyPairwise( const AlignmentTableRow_t & a,
                               const AlignmentTableRow_t & b);
+bool TestConsistencyPairwise( const BreakpointPair_t & a,
+                              const BreakpointPair_t & b);
 
 //==== MAIN
 
@@ -439,6 +450,22 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
     return true;
 }
 
+
+EdgeVec_t BreakpointSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap) {
+    BreakpointPairVec_t bppVec;
+    for(const auto & pair : edge.getSupportSummaryMap()){
+        BreakpointPair_t bpp = {
+            pair.first,
+            pair.second.isSplit,
+            pair.second.hostProximal < pair.second.hostDistal,
+            pair.second.virusProximal < pair.second.virusDistal,
+            pair.second.hostProximal,
+            pair.second.hostDistal
+        };
+        bppVec.push_back(bpp);
+    }
+    return RecursiveSplitEdge(edge,bppVec,&TestConsistencyGlobal,&TestConsistencyPairwise);
+}
 
 AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
                                         const AlignmentMap_t & alnMap)
@@ -1704,7 +1731,9 @@ void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
 EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                         EdgeVec_t (*edgeSplitter)(Edge_t &, const AlignmentMap_t &))
 {
-    fprintf(stderr,"Splitting Edges based on consensus sequences ...\n");
+    std::string basis = "unknown";
+    if(edgeSplitter == &ConsensusSplitEdge){ basis = "consensus sequences"; }
+    fprintf(stderr,"Splitting Edges based on %s ...\n",basis.c_str());
     //Multithreaded
     ctpl::thread_pool threadPool (Config.threads);
     std::vector<std::future<EdgeVec_t>> futureVec;
@@ -1750,10 +1779,49 @@ std::vector<bool> TestConsistencyGlobal (
     return resVec;
 }
 
+//Specialized function for testing whether all read pairs supporting a breakpoint
+//agree on where the breakpoint should be
+//Inputs - a vector of Breakpoint pairs (cref)
+//Output - a vector of boolean results (one for each row), true if consistent 
+std::vector<bool> TestConsistencyGlobal( const BreakpointPairVec_t & bppVec) {
+    //Initial Value
+    int32_t hostMostProximal = bppVec.front().hostProximal;
+    int32_t virusMostProximal = bppVec.front().virusProximal;
+    //Assumption that this value is consistent across bpPairs
+    bool hostOpensLeft = bppVec.front().hostOpensLeft;
+    bool virusOpensLeft = bppVec.front().hostOpensLeft;
+    //Start at the second element and find the most proximal positions
+    for(size_t i = 1; i < bppVec.size(); i++){
+        const BreakpointPair_t & bpp = bppVec.at(i);
+        if( (hostOpensLeft && bpp.hostProximal < hostMostProximal) ||
+            (!hostOpensLeft && bpp.hostProximal > hostMostProximal) )
+        {
+            hostMostProximal = bpp.hostProximal;
+        }
+        if( (virusOpensLeft && bpp.virusProximal < virusMostProximal) ||
+            (!virusOpensLeft && bpp.virusProximal > virusMostProximal) )
+        {
+            virusMostProximal = bpp.virusProximal;
+        }
+    }
+    std::vector<bool> resVec;
+    for(auto & bpp : bppVec){
+        size_t maxDist = (bpp.isSplit) ? Config.max_sc_dist : Stats.max_is;
+        size_t hostDist = (hostMostProximal > bpp.hostProximal) ? 
+                            hostMostProximal - bpp.hostProximal :
+                            bpp.hostProximal - hostMostProximal;
+        size_t virusDist = (virusMostProximal > bpp.virusProximal) ? 
+                            virusMostProximal - bpp.virusProximal :
+                            bpp.virusProximal - virusMostProximal;
+        bool bRes = (hostDist > maxDist || virusDist > maxDist) ? false : true;
+        resVec.push_back(bRes);
+    }
+    return resVec;
+}
 
 //Given two partial DNA sequences tests if the two have consistent
 //sequences: that is they match at all non-N positions
-//Inputs - two strings representing the two sequences
+//Inputs - two AlignmentTableRows with sequences
 //Output - a boolean of whether they are consistent or not
 bool TestConsistencyPairwise(const AlignmentTableRow_t & a, const AlignmentTableRow_t & b){
     const std::string & seq1 = a.seq;
@@ -1767,7 +1835,48 @@ bool TestConsistencyPairwise(const AlignmentTableRow_t & a, const AlignmentTable
     return true;
 }
 
-
+//Given two pairs of breakpoints, tests if they are consistent with eachother
+// Two breakpoints are consistent if their downstream interval overlaps
+// the downstream interval is either max_sc_dist for split read pairs,
+// or max_is for chimeric read pairs
+//Inputs - two breakpoint pairs
+//Output - a boolean of whether they are consistent or not
+bool TestConsistencyPairwise( const BreakpointPair_t & a,
+                              const BreakpointPair_t & b)
+{
+    int32_t aDist = (a.isSplit) ? Config.max_sc_dist : Stats.max_is;
+    int32_t bDist = (b.isSplit) ? Config.max_sc_dist : Stats.max_is;
+    int32_t aLeft, aRight, bLeft, bRight;
+    //Must pass on both the host and virus ends
+    for (bool checkHost : {true, false}) {
+        //Assume this is the same for both a and b
+        bool opensLeft = (checkHost) ? a.hostOpensLeft : a.virusOpensLeft;
+        int32_t aProx = (checkHost) ? a.hostProximal : a.virusProximal;
+        int32_t bProx = (checkHost) ? b.hostProximal : b.virusProximal;
+        if(opensLeft) {
+            aLeft = (aProx > aDist) ? aProx - aDist : 0;
+            aRight = aProx;
+            bLeft = (bProx > bDist) ? bProx - bDist : 0;
+            bRight = bProx;
+        } else {
+            aLeft = aProx;
+            aRight = aProx + aDist;
+            bLeft = bProx;
+            bRight = bProx + bDist;
+        }
+        //Ensure A starts before B
+        if(aLeft > bLeft){
+            std::swap(aLeft,bLeft);
+            std::swap(aRight,bRight);
+        }
+        //Test for overlap (as A starts before B, they can only overlap if the end of A 
+        // is at or past the start of B)
+        if(aRight < bLeft){
+            return false;
+        }
+    }
+    return true;
+}
 
 
 
