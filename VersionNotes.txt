@@ -63,3 +63,5 @@ Version 2.0.2
 Version 2.0.3
 	Added Utility scripts for expanding fragment edge associations
         Refactored Edge Splitting code to enable future extensions
+Version 2.0.4
+	Added date and time to Execution log statements

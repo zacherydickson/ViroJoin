@@ -4,6 +4,7 @@ Python Dispatcher for ViroJoin
 """
 
 import argparse
+from datetime import datetime
 import math
 import os
 import sys
@@ -200,7 +201,8 @@ def get_depend_ver(cmd):
 
 def execute(cmd,mustPass=True):
     "Logs and executes a command"
-    eprint("Executing:", cmd)
+    now_str=str(datetime.now)
+    eprint(f"[{now_str}] Executing:", cmd)
     if not os.system(cmd) == 0 and mustPass:
         eprint("Execution Failed - Exiting")
         sys.exit(1)
