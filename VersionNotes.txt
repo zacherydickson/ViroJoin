@@ -60,5 +60,6 @@ Version 2.0.1
 	Updated default maxAltAln to 20
 Version 2.0.2
 	Improved error message if no reads map during insert size estimation
-Version 2.0.2+expandEdge
-	Investigation of expanding fragment-edge assignments to improve repeat resolution
+Version 2.0.3
+	Added Utility scripts for expanding fragment edge associations
+        Refactored Edge Splitting code to enable future extensions
