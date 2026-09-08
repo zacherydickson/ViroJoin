@@ -65,3 +65,5 @@ Version 2.0.3
         Refactored Edge Splitting code to enable future extensions
 Version 2.0.4
 	Added date and time to Execution log statements
+Version 2.0.5
+	Implemented changes to improve deduplication even with sequencing errors at read termini

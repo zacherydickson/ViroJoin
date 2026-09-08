@@ -64,7 +64,16 @@ bam_hdr_t* JointHeader;
 //which explode when we go to test them, by using a default filter, everything
 //has a cigar 
 StripedSmithWaterman::Filter AlnFilter;//(true,true,30,32767);
-StripedSmithWaterman::Aligner Aligner(1,4,6,1,false);
+static const uint8_t AlignerMatchScore = 1;
+static const uint8_t AlignerMismatchPenalty = 4;
+static const uint8_t AlignerGapOpenPenalty = 6;
+static const uint8_t AlignerGapExtensionPenalty = 1;
+static const bool AlignerNasmatch = false;
+StripedSmithWaterman::Aligner Aligner(  AlignerMatchScore,
+                                        AlignerMismatchPenalty,
+                                        AlignerGapOpenPenalty,
+                                        AlignerGapExtensionPenalty,
+                                        AlignerNasmatch );
 int32_t AlnMaskLen;
 bool ExploratoryDeduplication = false;
 static size_t MinimumReads = 4;
@@ -103,6 +112,9 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
 //    const StripedSmithWaterman::Alignment & vAln,
 //    bool bHRev, bool bVRev);
 void DeduplicateEdge(Edge_t & edge,const AlignmentMap_t & alnMap);
+bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
+                                        const std::string & query,
+                                        const Region_pt & reg);
 size_t FillStringFromAlignment( std::string & outseq,
                                 const std::string & inseq,
                                 size_t offset, size_t maxLen,
@@ -311,6 +323,15 @@ int main(int argc, const char* argv[]) {
 void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
                 AlignmentMap_t & alnMap)
 {
+    int nAlignFilterSteps = 6;
+    enum AlignFilterSteps {
+        SSW_ALIGNMENT = 0,
+        DISTAL_CLIP,
+        CHECK_IMPROVEMENT,
+        LEN_SCORE_DOUBLE_CLIP,
+        READ_LOW_COMPLEXITY,
+        REGION_LOW_COMPLEXITY
+    };
     //Need to track host and virus scores separately
     //0th element is host, 1st element is virus
     std::array<uint16_t,2> bestScore = {0,0};
@@ -324,11 +345,9 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
             StripedSmithWaterman::Alignment curAln;
             int step = 0;
             bool bPass = true;
-            uint32_t opdata;
-            bool bClipped = false;
             do {
                 switch (step) {
-                    case 0: //Does the read align?
+                    case SSW_ALIGNMENT: //Does the read align?
                         bPass = Aligner.Align(  query.c_str(),
                                                 reg->sequence.c_str(),
                                                 reg->sequence.length(),
@@ -336,32 +355,27 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
                         //Co-opting unused variable in structure to store the strand of the read
                         curAln.sw_score_next_best = (uint16_t) strand;
                         break;
-                    case 1: //Is alignment better than the other strand? (or first)
+                    case DISTAL_CLIP: //Ensure the distal side of the alignment is not clipped
+                        bPass =  DistalClippedAlignmentProcessing(curAln,query,reg);
+                        break;
+                    case CHECK_IMPROVEMENT: //Is alignment better than the other strand? (or first)
                         bPass = curAln.sw_score > aln.sw_score;
                         break;
-                    case 2: // alignment length, score, clippedness
+                    case LEN_SCORE_DOUBLE_CLIP: // alignment length, score, clippedness
                         //curAln is better than previous best
                         bPass = accept_alignment(curAln, Config.min_sc_size);
                         break;
-                    case 3: // read low complexity filter
+                    case READ_LOW_COMPLEXITY: // read low complexity filter
                         bPass = !is_low_complexity(query.c_str(),
                                             curAln.query_begin,curAln.query_end);
                         break;
-                    case 4: // region low complexity filter
+                    case REGION_LOW_COMPLEXITY: // region low complexity filter
                         bPass = !is_low_complexity(reg->sequence.c_str(),
                                             curAln.ref_begin,curAln.ref_end);
                         break;
-                    case 5: //Split side filter
-                        //Get the cigar op on the distal side of the read
-                        opdata = curAln.cigar[  (reg->opensLeft()) ?  
-                                                curAln.cigar.size()-1 : 0 ];
-                        bClipped =  (cigar_int_to_op(opdata) == 'S') && 
-                                    ( cigar_int_to_len(opdata) >=
-                                        uint32_t(Config.min_sc_size) );
-                        //Fail if an alignment is split on the distal side
-                        bPass = !bClipped;
+                    
                 }
-            } while(++step < 6 && bPass);
+            } while(++step < nAlignFilterSteps && bPass);
             if(bPass) { aln = curAln; }
         }
         // Do not store failed alignments
@@ -777,6 +791,128 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
     for(const auto & frag : toRemoveSet){
         edge.removeSupport(frag);
     }
+}
+
+//Given an alignment between a query and a region
+//  ensures the junction distal side of the alignment is not clipped
+//  If already not clipped no adjustment is made
+//  If the distal clip is small (less than global min clip size), the alignment
+//   is adjusted by extending the alignment to the end of the read (or region)
+//   scores are updated according to global alignment settings
+//   Extension is performed simply, either match or mismatch; If the end of a region
+//    is reached before the end of the read extension fails (TODO: regions are too small)
+//  If the distal clip is too large ( >= global min clip size), adjustment fails
+//Inputs - a reference to alignment to (potentially) modify
+//       - constant references to the query and region the alignment was built from
+//Output - true if no adjustment, or a successful adjustment was made
+//       - false otherwise
+bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
+                                        const std::string & query,
+                                        const Region_pt & reg)
+{
+#ifndef NDEBUG
+    //Fail if an alignment with an empty cigar vector is encountered
+    if(aln.cigar.empty() ) { throw std::logic_error("An alignment with an empty cigar string was encountered"); }
+#endif
+    size_t distalOpIndex = (reg->opensLeft()) ? aln.cigar.size()-1 : 0;
+    //Get the cigar op on the distal side of the read
+    uint32_t opdata = aln.cigar[distalOpIndex];
+    //No adjusted needed if not clipped
+    if(cigar_int_to_op(opdata) != 'S') { return true; }
+    uint32_t clipLen = cigar_int_to_len(opdata);
+    //Clip too large -> failure
+    if( clipLen >= uint32_t(Config.min_sc_size) ) { return false; }
+    //We have a small clip, so we can extend the distal end of the alignment
+    if( (int32_t(clipLen) > aln.ref_begin && !reg->opensLeft()) ||
+        (aln.ref_end + clipLen >= reg->sequence.length() && reg->opensLeft()) )
+    { //The query cannot be fully extended without going outside of the reference
+        //TODO: Justified if regions are sufficiently large
+        return false;
+    }
+    const std::string & ref = reg->sequence;
+    //Structure for constructing the new cigar vector,
+    // need to be able to modify either end so a deque makes sense
+    std::deque<uint32_t> cigarDeque(aln.cigar.begin(),aln.cigar.end());
+    using Push = void (std::deque<uint32_t>::*)(const uint32_t &);
+    using Pop = void (std::deque<uint32_t>::*)();
+    //Data structure for configuring the extension
+    struct ExtensionState { 
+        Push push;
+        Pop pop;
+        int32_t q, r;
+        int8_t step;
+        bool update(size_t qLen) {
+            q += step;
+            r += step;
+            //Check query end before ref end to make sure that a fully extended query
+            // is a pass
+            //We assume that the query will fit inside the reference after extension
+            if( (q < 0) || (size_t(q) >= qLen) ) { return false; }
+            return true;
+        }
+    } extState;
+    //Initialize the Extention State at the distal end of the alignment
+    //We will assume the extension will succeed and update the alignment begin and
+    // end positions as appropriate
+    if(reg->opensLeft()) { // Right Extension
+        //Set the position
+        extState.q = aln.query_end;
+        extState.r = aln.ref_end;
+        //Set position update rules
+        extState.step = 1;
+        //Set the cigar update rules
+        extState.push = &std::deque<uint32_t>::push_back;
+        extState.pop = &std::deque<uint32_t>::pop_back;
+        //Update the final alignment position
+        aln.query_end += clipLen;
+        aln.ref_end += clipLen;
+    } else { // Left Extension
+        //Set the position
+        extState.q = aln.query_begin;
+        extState.r = aln.ref_begin;
+        //Set position update rules
+        extState.step = -1;
+        //Set the cigar update rules
+        extState.push = &std::deque<uint32_t>::push_front;
+        extState.pop = &std::deque<uint32_t>::pop_front;
+        //Update the final alignment position
+        aln.query_begin -= clipLen;
+        aln.ref_begin -= clipLen;
+    }
+    //Remove the distal clip operation
+    (cigarDeque.*extState.pop)();
+    int opLen = 0;
+    char opChar = 'M';
+    //Extend in the distal direction and construct cigar operations and 
+    // update the alignment as appropriate (score and num_mismatches)
+    while( extState.update(query.length()) ) {
+        char curOp;
+        if(query.at(extState.q) == ref.at(extState.r)) {
+            curOp = 'M';
+            aln.sw_score += AlignerMatchScore;
+        } else {
+            curOp = 'X';
+            aln.sw_score -= AlignerMismatchPenalty;
+            aln.mismatches++;
+        }
+        if(curOp == opChar) { //Extend the current operation
+            opLen++;
+            continue;
+        } else if(opLen) { // store the previous operation (if it exists)
+            (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
+            //Then reset the length
+            opLen = 1;
+        }
+        opChar = curOp;
+    }
+    if(opLen) { //Store the last cigar operation
+        (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
+    }
+    //Update the alignment's cigar vector and string
+    aln.cigar.resize(cigarDeque.size());
+    aln.cigar.assign(cigarDeque.begin(),cigarDeque.end());
+    aln.cigar_string = get_cigar_code(aln.cigar.data(),aln.cigar.size());
+    return true;
 }
 
 //Sets the characters of an output string to the appropriate characters
