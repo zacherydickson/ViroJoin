@@ -67,3 +67,6 @@ Version 2.0.4
 	Added date and time to Execution log statements
 Version 2.0.5
 	Implemented changes to improve deduplication even with sequencing errors at read termini
+        This will significantly reduce the number of reported integrations, but those remaining will have high confidence
+Version 3.0.0
+        Removed requirement that a joint, bwa-indexed reference be provided to reduce barriers to usage
