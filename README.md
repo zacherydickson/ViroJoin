@@ -48,7 +48,6 @@ For dust, we recommend [this](https://github.com/lh3/sdust) sdust implementation
 ViroJoin needs three references:
 1) the host genome
 2) the virus(es) reference, one fasta sequence per virus
-3) a concatenation of the host genome and the viruses genomes
 
 Each of the references should be indexed with bwa and samtools. For example, suppose the host genome is contained in a file host.fa, and the virus genomes are in virus.fa. You should run
 ```
@@ -58,9 +57,6 @@ samtools faidx host.fa
 bwa index virus.fa
 samtools faidx virus.fa
 
-cat host.fa virus.fa > host+virus.fa
-bwa index host+virus.fa
-samtools faidx host+virus.fa
 ```
 
 ## Preprocessing the input reads
@@ -68,7 +64,7 @@ samtools faidx host+virus.fa
 ViroJoin does not perform any pre-processing on the input fastq files.
 Inputs for for ViroJoin should first pre processed to remove adapters, low-quality bases and reads, and polynucleotide artifacts such as poly-A or Poly-Gs.
 
-We do not recommend the use of trimming from the 5 prime end of reads as this can interfere with deduplication efforts.
+We do NOT recommend the use of trimming from the 5 prime end of reads as this can interfere with deduplication efforts.
 
 We suggest [fastp](https://github.com/OpenGene/fastp).
 
@@ -76,7 +72,7 @@ We suggest [fastp](https://github.com/OpenGene/fastp).
 
 The bare minimum command for running ViroJoin is 
 ```
-python surveyor reads_1.fq[.gz] reads_2.fq[.gz] /path/to/empty/workdir /path/to/host/reference /path/to/virus/reference /path/to/host+virus/reference 
+python surveyor reads_1.fq[.gz] reads_2.fq[.gz] /path/to/empty/workdir /path/to/host/reference /path/to/virus/reference
 ```
 
 reads 1 and 2 are fastq formatted fwd and reverse reads
@@ -113,7 +109,11 @@ The final output will be placed in the workdir, the results are:
 - `results.remapped.t1.txt` - Identifies the positions of the junctions, more information below
 - `host_bp_seqs.fa` - contains the sequences of the host side of the junctions
 - `host_bp_seqs.fa` - contains the sequences of the viral side of the junctions
-- `readsx/ID.bam` - contains the reads which support the identified junctions
+- `allReadsx.bam` - contains the reads which support the identified junctions
+    * the RG (read group) tag is used to differentiate reads for each junction
+    * Primary alignments correspond to the distal end of a fragment; will always be oriented towards the junction
+    * Supplementary alignments correspond to mapping clips from primary alignments; always oriented away from the
+      junction
 
 Please note that the `results.remapped.t1.txt` contains the final set of identified junctions, the other results may have information for junctions which were eventually filtered out. Match up the IDs in the results files.
 
