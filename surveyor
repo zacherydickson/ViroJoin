@@ -311,7 +311,6 @@ if missing_file(PATH_DICT["ctgLen"]):
             with pyfaidx.Fasta(reference_fa_file) as reference_fa:
                 for key,seq in reference_fa.items():
                     contig_lengths.write(f"{key}\t{seq.unpadded_len}\n")
-sys.exit(1);
 #Construct Bam workspace for fastq input
 bam_workspace = os.path.join(cmd_args.workdir,"bam_0")
 path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
@@ -338,9 +337,9 @@ if cmd_args.isParams is not None:
 elif missing_file(path_dict["stats"]):
     try:
         max_read_len, max_is = \
-            max_is_calc.get_max_is_from_fq(cmd_args.workdir, cmd_args.fq1, \
-            cmd_args.fq2, cmd_args.host_and_virus_reference, cmd_args.bwa, \
-            cmd_args.threads)
+            max_is_calc.get_max_is_from_fq_2(cmd_args.workdir, cmd_args.fq1, \
+            cmd_args.fq2, cmd_args.host_reference, cmd_args.virus_reference, \
+            cmd_args.bwa, cmd_args.threads, cmd_args.samtools)
     except ValueError as ex:
         eprint(f"[ERROR] {ex}")
         sys.exit(1)
@@ -354,8 +353,6 @@ else:
     max_is = get_max_is(path_dict["stats"])
 
     max_read_len = get_max_rl(PATH_DICT["config"])
-
-
 
 isolate_cmd = ( f"{BIN_DICT['isolate_relevant_pairs_fq']}"
                 f" {cmd_args.fq1} {cmd_args.fq2}"
