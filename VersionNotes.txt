@@ -68,5 +68,6 @@ Version 2.0.4
 Version 2.0.5
 	Implemented changes to improve deduplication even with sequencing errors at read termini
         This will significantly reduce the number of reported integrations, but those remaining will have high confidence
-Version 3.0.0
+Version 2.1.0
         Removed requirement that a joint, bwa-indexed reference be provided to reduce barriers to usage
+        Including a joint reference in the call is now deprecated, with a warning
