@@ -65,8 +65,8 @@ cmd_parser.add_argument('host_reference',
 cmd_parser.add_argument('virus_reference',
                         help=   'References of a list of viruses in FASTA format;'
                                 'used as prefix for bwa index.')
-cmd_parser.add_argument('host_and_virus_reference',
-                        help='Ignored and deprecated')
+cmd_parser.add_argument('host_and_virus_reference', nargs="?",
+                        help='Ignored and deprecated; maintained for backwards compatibility')
 cmd_parser.add_argument('--threads', type=int, default=1,
                         help='Number of threads to be used.')
 cmd_parser.add_argument('--bwa', default='bwa', help='BWA path.')
@@ -254,6 +254,10 @@ def parse_is_param():
                 " readLen,mean,SD,upperSD")
         sys.exit(1)
     return (float(x) for x in params)
+
+#Warning for deprecated joint reference
+if(cmd_args.host_and_virus_reference):
+    eprint("[WARNING] Providing a joint host_and_virus reference is deprecated")
 
 #Check Dependency Versions
 for depend, ver in DEPEND_REQ_VERSIONS.items():
