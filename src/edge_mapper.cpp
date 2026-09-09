@@ -24,14 +24,14 @@
 //==== TYPE DECLARATIONS
 
 //Read_t, Edge_t, Region_t, SQPair_t, ReadPair_t, ReadPairAlnSummary_t
-//As well as vectors, pointers, maps, and sets of these types are defined in 
+//As well as vectors, pointers, maps, and sets of these types are defined in
 //edge_utils.h
 
 struct RRLabelAssoc_t {
     std::string readName;
     long int regionId;
     uint16_t flag;
-}; 
+};
 
 struct BreakpointPair_t {
     ReadPair_pt label;
@@ -62,7 +62,7 @@ bam_hdr_t* JointHeader;
 //For an alignment to pass it must have a score of at least 30
 //NOTE:The Built in Filter is not used as it leads to alignments without cigar strings
 //which explode when we go to test them, by using a default filter, everything
-//has a cigar 
+//has a cigar
 StripedSmithWaterman::Filter AlnFilter;//(true,true,30,32767);
 static const uint8_t AlignerMatchScore = 1;
 static const uint8_t AlignerMismatchPenalty = 4;
@@ -96,7 +96,7 @@ AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
 EdgeVec_t ConsensusSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap);
 bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
                         bool isSupplemental,
-                        const Read_pt & mate, const Region_pt & mateSubject, 
+                        const Read_pt & mate, const Region_pt & mateSubject,
                         const AlignmentMap_t & alnMap,
                         bam1_t* entry);
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset);
@@ -131,7 +131,7 @@ std::string GenerateConsensus(const AlignmentTable_t & alnTable,
                                 std::vector<size_t> * diffVec = nullptr);
 std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
                                 const AlignmentMap_t & alnMap, size_t & nFill);
-EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
+EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
                     const Name2ReadPairMap_t & rpMap,
                     const RegID2RegionMap_t & regMap,
                     const AlignmentMap_t & alnMap);
@@ -141,8 +141,9 @@ ReadSet_t LoadReads(const std::string & bamFName,
 ReadVec_t LoadReadsInRef(
         const std::string & alnFileName, int tid,hts_pos_t beg, hts_pos_t end,
         const std::unordered_set<std::string> * rNames = nullptr);
-RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
-                        const std::string regCandFName);
+RegID2RegionMap_t LoadRegions(  const std::string hostRefFName,
+                                const std::string virusRefFName,
+                                const std::string regCandFName);
 void LoadRegionSeq( const std::string & regionsFName,
                     Region2ReadsMap_t & reg2readSetMap,
                     Name2RegionMap_t & nameMap);
@@ -189,7 +190,7 @@ bool TestConsistencyPairwise( const BreakpointPair_t & a,
 //Parse Fasta Files for regions and reads as well as a file defining
 //edges
 //Regions sequences are expected to be the same strand as labelled
-//Region names should be in the format CONTIG,OFF,END,STRAND(:+) 
+//Region names should be in the format CONTIG,OFF,END,STRAND(:+)
 //Reads are always on the reference strand regardless of fwd/rev
 //Read names should be in the format READID_[12]
 //
@@ -207,9 +208,10 @@ bool TestConsistencyPairwise( const BreakpointPair_t & a,
 int main(int argc, const char* argv[]) {
 
     //## Parse Inputs
-    std::string joint_ref_file_name = argv[1];
-    std::string workdir = argv[2];
-    std::string workspace = argv[3];
+    std::string host_ref_file_name = argv[1];
+    std::string virus_ref_file_name = argv[2];
+    std::string workdir = argv[3];
+    std::string workspace = argv[4];
     //## Files to be used from the workdir
     std::string stats_file_name = workspace + "/stats.txt";
     std::string config_file_name = workdir + "/config.txt";
@@ -230,7 +232,8 @@ int main(int argc, const char* argv[]) {
     std::string virusbp_file_name = workdir + "/virus_bp_seqs.fa";
     //Quick test for required files
     for(const std::string & path : {
-            joint_ref_file_name, bam_file_name, edge_file_name,
+            host_ref_file_name, virus_ref_file_name, bam_file_name,
+            edge_file_name,
             fragment_edge_file_name, read_region_file_name,
             region_bed_file_name, reads_dir} )
     {
@@ -252,7 +255,7 @@ int main(int argc, const char* argv[]) {
     Read2RegionsMap_t  read2regSetMap;
     Region2ReadsMap_t  reg2readSetMap;
     Name2ReadMap_t readNameMap;
-    
+
     std::vector<RRLabelAssoc_t> rrLabelAssocVec =
         LoadReadRegionAssoc(read_region_file_name);
     std::unordered_set<std::string> readNameSet;
@@ -261,8 +264,9 @@ int main(int argc, const char* argv[]) {
         readNameSet.insert(assoc.readName);
     }
     ReadSet_t readSet = LoadReads(bam_file_name,&readNameSet);
-    RegID2RegionMap_t regIdtoRegionMap = LoadRegions(joint_ref_file_name,
-                                        region_bed_file_name);
+    RegID2RegionMap_t regIdtoRegionMap = LoadRegions(   host_ref_file_name,
+                                                        virus_ref_file_name,
+                                                        region_bed_file_name );
     fprintf(stderr,"Indexing Read Pairs ...\n");
     //Index reads by read name - These are also the fragment objects
     Name2ReadPairMap_t rNametoReadPairMap;
@@ -286,7 +290,7 @@ int main(int argc, const char* argv[]) {
         }
     }
     fprintf(stderr,"Bi-directionally Associated %lu ReadPairs and %lu Regions...\n", read2regSetMap.size(), reg2readSetMap.size());
-    
+
     //Perform alignments
     AlignmentMap_t alnMap;
     AlignReads(read2regSetMap,alnMap);
@@ -296,7 +300,7 @@ int main(int argc, const char* argv[]) {
                                     rNametoReadPairMap, regIdtoRegionMap,
                                     alnMap);
     //Note: Some of this effort could be performed during the loading step
-    ////## Alignments 
+    ////## Alignments
     RemoveUnalignedReads(edgeVec,alnMap);
     ////## Edge Processing
     OrderEdges(edgeVec,alnMap);
@@ -374,7 +378,6 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
                         bPass = !is_low_complexity(reg->sequence.c_str(),
                                             curAln.ref_begin,curAln.ref_end);
                         break;
-                    
                 }
             } while(++step < nAlignFilterSteps && bPass);
             if(bPass) { aln = curAln; }
@@ -417,7 +420,7 @@ void AlignReads(const Read2RegionsMap_t &regMap,
     ctpl::thread_pool threadPool (Config.threads);
     std::vector<std::future<void>> futureVec;
     for(const auto & pair : regMap){
-        std::future<void> future = threadPool.push( 
+        std::future<void> future = threadPool.push(
                 [&pair,&alnMap](int id) {
                     AlignRead(pair.first,pair.second,alnMap);
                 } );
@@ -445,7 +448,7 @@ bool AreConsistentCigars(   std::vector<uint32_t> vec1,
                             std::vector<uint32_t> vec2,
                             bool bFromBack)
 {
-    size_t max = (vec1.size() < vec2.size()) ? vec2.size() : vec1.size(); 
+    size_t max = (vec1.size() < vec2.size()) ? vec2.size() : vec1.size();
     if(bFromBack){
         std::reverse(vec1.begin(),vec1.end());
         std::reverse(vec2.begin(),vec2.end());
@@ -504,7 +507,7 @@ AlignmentTable_t BuildAlignmentTable(   const Edge_t & edge,
 //Output - None, modifies the newEdges vector and edge object
 EdgeVec_t ConsensusSplitEdge( Edge_t & edge, const AlignmentMap_t & alnMap) {
     AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
-    return RecursiveSplitEdge(edge,alnTable,&TestConsistencyGlobal,&TestConsistencyPairwise);//,rowLabelVec,rowSeqVec,nFillVec); 
+    return RecursiveSplitEdge(edge,alnTable,&TestConsistencyGlobal,&TestConsistencyPairwise);//,rowLabelVec,rowSeqVec,nFillVec);
 }
 
 
@@ -642,7 +645,7 @@ call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
 //Input - a const reference to a vector of edges to put into the queue
 //          It isn't required, but ideally this edge vector is sorted in
 //          decreasing order
-//      - a 
+//      - a
 void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
                         CBranchedEdgeQueue & edgeQueue)
 {
@@ -662,7 +665,7 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
             edgeQueue.queueSize(),edgeQueue.size());
 }
 
-////Given the an alignment from either/host or virus 
+////Given the an alignment from either/host or virus
 ////Assigns the  reference begin/end offsets into juncton proximal/distal offsets
 ////  depending on the strand of the reference
 //// Host alignments are distal-proximal, unless reversed
@@ -781,11 +784,11 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
         //If Exploratory, then one end may be non-unique
         //otherwise both must be unique
         if( (!ExploratoryDeduplication && (bSeenHuman || bSeenVirus)) ||
-            (bSeenHuman && bSeenVirus) ) 
+            (bSeenHuman && bSeenVirus) )
         {
             toRemoveSet.insert(frag);
             continue;
-        } 
+        }
         hostPositionSet.insert(summary.hostDistal);
         virusPositionSet.insert(summary.virusDistal);
     }
@@ -836,7 +839,7 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
     // need to be able to modify either end so a deque makes sense
     std::deque<uint32_t> cigarDeque(aln.cigar.begin(),aln.cigar.end());
     //Data structure for configuring the extension
-    struct ExtensionState { 
+    struct ExtensionState {
         using Push = void (std::deque<uint32_t>::*)(const uint32_t &);
         using Pop = void (std::deque<uint32_t>::*)();
         using Front = uint32_t & (std::deque<uint32_t>::*)();
@@ -894,7 +897,7 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
     int opLen = bam_cigar_oplen(op);
     char opChar = bam_cigar_op(op);
     (cigarDeque.*extState.pop)();
-    //Extend in the distal direction and construct cigar operations and 
+    //Extend in the distal direction and construct cigar operations and
     // update the alignment as appropriate (score and num_mismatches)
     while( extState.update(query.length()) ) {
         char curOp;
@@ -911,7 +914,7 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
             continue;
         }
         // store the previous operation (if it exists)
-        // We are assuming the previous operation has some length, since we 
+        // We are assuming the previous operation has some length, since we
         // started with the most distal non-clip operation
         (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
         //Then reset the length
@@ -1017,7 +1020,7 @@ void FilterEdgeVec(EdgeVec_t & edgeVec, const ReadPairSet_t * used){
 //Identifies read pairs with an apparent insert size which is too large
 //and removes them
 //Inputs - an edge to process
-//         - an alignment map 
+//         - an alignment map
 //Output - None, modifies the edge object
 void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap){
     std::vector<ReadPair_pt> toRemoveVec;
@@ -1118,7 +1121,7 @@ void FilterVector(  std::vector<T> & vec,
 //std::string GenerateConsensus(const std::vector<std::string> & rowVec,
 //                                std::vector<size_t> * diffVec)
 //{
-//    
+//
 //    if(!rowVec.size()) return std::string();
 //    if(diffVec) diffVec->assign(rowVec.size(),0);
 //    std::string cons(rowVec.front().length(),'N');
@@ -1233,13 +1236,13 @@ std::string GetAlignedSequence( const Edge_t & edge, const ReadPair_pt & rp,
 }
 
 
-//Given paths to the edge and fragment edge associations as well as a mapping from fragment names to 
+//Given paths to the edge and fragment edge associations as well as a mapping from fragment names to
 //  ReadPair objects, construct a vector of Edges
 //Inputs - a path to a tab delim file with edge ids, and region ids
 //       - a path to a tab delim file with fragment names, and edge ids
 //       - a const reference to a mapping between fragment names and read pairs
 //Output - A vector of edge objects
-EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName, 
+EdgeVec_t LoadEdges(std::string edgeFName, std::string feFName,
                     const Name2ReadPairMap_t & rpMap,
                     const RegID2RegionMap_t & regMap,
                     const AlignmentMap_t & alnMap)
@@ -1400,19 +1403,25 @@ ReadVec_t LoadReadsInRef(const std::string & alnFileName,
 //
 //Inputs - a path to a joint fasta reference
 //       - a path to a region candidate bed file
-RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
-                        const std::string regCandFName) 
+RegID2RegionMap_t LoadRegions(  const std::string hostRefFName,
+                                const std::string virusRefFName,
+                                const std::string regCandFName)
 {
     fprintf(stderr,
-            "Loading candidate regions from %s and %s ...\n", 
-            jointRefFName.c_str(), regCandFName.c_str());
+            "Loading candidate regions from %s, %s, and %s ...\n",
+            hostRefFName.c_str(), virusRefFName.c_str(), regCandFName.c_str());
     RegionSet_t regSet;
     RegID2RegionMap_t regIdtoRegionMap;
     std::ifstream regCandFile(regCandFName);
-    faidx_t * jointRefFai = fai_load(jointRefFName.c_str());
-    if(!jointRefFai) {
-        throw std::runtime_error(   "Failure to open index joint reference: " + 
-                                    jointRefFName);
+    faidx_t * hostRefFai = fai_load(hostRefFName.c_str());
+    faidx_t * virusRefFai = fai_load(virusRefFName.c_str());
+    if(!hostRefFai) {
+        throw std::runtime_error(   "Failure to open index host reference: " +
+                                    hostRefFName);
+    }
+    if(!virusRefFai) {
+        throw std::runtime_error(   "Failure to open index virus reference: " +
+                                    virusRefFName);
     }
     std::string chr;
     size_t off, end, id;
@@ -1420,24 +1429,27 @@ RegID2RegionMap_t LoadRegions(const std::string jointRefFName,
     char strand;
     while(regCandFile >> chr >> off >> end >> id >> flag >> strand){
         bool bViral = !(flag & (1 << ChimericFragment_t::FLAG_BITS));
+        faidx_t * refFai = (bViral) ? virusRefFai : hostRefFai;
         bool opensLeft = (flag & ChimericFragment_t::OPENS_LEFT);
         std::string reg =   "{" + chr + "}:" + std::to_string(off +1) + "-" +
                             std::to_string(end);
         hts_pos_t regLen;
-        char* regSeq = fai_fetch64(jointRefFai,reg.c_str(), &regLen);
+        char* regSeq = fai_fetch64(refFai,reg.c_str(), &regLen);
         if(!regSeq || regLen < 0) {
-            throw std::runtime_error(   "Failure to extract region (" + reg + 
+            const std::string & refFName = (bViral) ? virusRefFName : hostRefFName;
+            throw std::runtime_error(   "Failure to extract region (" + reg +
                                         ") from joint reference: " +
-                                        jointRefFName);
+                                        refFName);
         }
         std::string regSeqStr(regSeq,regLen);
-        auto pair = regSet.insert(std::make_shared<Region_t>( 
+        auto pair = regSet.insert(std::make_shared<Region_t>(
                         id, chr, regSeqStr, off, end, bViral, opensLeft) );
         //the region might not be inserted if it is the same, but with a different id
         //the first elem of pair is an iterator to the inserted (or blocking) region
          regIdtoRegionMap[id] = *(pair.first);
     }
-    fai_destroy(jointRefFai);
+    fai_destroy(hostRefFai);
+    fai_destroy(virusRefFai);
     fprintf(stderr,"Loaded %lu candidate regions with %lu ids\n",regSet.size(),regIdtoRegionMap.size());
     return regIdtoRegionMap;
 }
@@ -1458,7 +1470,7 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     fprintf(stderr,"Ordering Edges ...\n");
     EdgeVec_t newEdges;
     //Split On Consensus
-    newEdges= SplitEdges(edgeVec,alnMap,&ConsensusSplitEdge); 
+    newEdges= SplitEdges(edgeVec,alnMap,&ConsensusSplitEdge);
     //Eliminate Edges with low read counts
     FilterEdgeVec(edgeVec);
     //Add any new edges back in (these are already filtered)
@@ -1468,7 +1480,7 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
     ProcessEdges(edgeVec,alnMap);
 
     ////Split On Breakpoint Position
-    //newEdges = SplitEdges(edgeVec,alnMap,&BreakpointSplitEdge); 
+    //newEdges = SplitEdges(edgeVec,alnMap,&BreakpointSplitEdge);
     ////Eliminate Edges with low read counts
     //FilterEdgeVec(edgeVec);
     ////Add any new edges back in (these are already filtered)
@@ -1486,7 +1498,7 @@ void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
 {
     //Output the call
     call_t call = ConstructCall(id, edge,alnMap, used);
-    out << call.to_string() << "\n"; 
+    out << call.to_string() << "\n";
 }
 
 
@@ -1586,14 +1598,14 @@ void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
 
 //Proceeds from high confidence edges to low confidence edges, ensuring
 //each read is used exactly once
-//  The edges may be reordered as 
+//  The edges may be reordered as
 //The output order is determined by constructing a queue from the reads
 //  using a branched queue structure
 //Inputs - a reference to a vector of edges sorted from most to
 //            least confident
 //         - a const reference to an alignment map
 //         - a string representing the results file
-//         - a string representing the reads directory 
+//         - a string representing the reads directory
 //Output - None, prints to outfile
 void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     const Name2ReadMap_t & readNameMap,
@@ -1753,9 +1765,9 @@ void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap){
 //        return EdgeVec_t();
 //    }
 //    //Reduce the vectors to only the rows of interest for the new edge
-//    FilterVector(rowLabelVec,roiSet); 
-//    FilterVector(rowSeqVec,roiSet); 
-//    FilterVector(nFillVec,roiSet); 
+//    FilterVector(rowLabelVec,roiSet);
+//    FilterVector(rowSeqVec,roiSet);
+//    FilterVector(nFillVec,roiSet);
 //    //Prevent infinite recursion by requiring that the recursion stops if
 //    //the next round isn't smaller
 //    if(rowLabelVec.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
@@ -1821,7 +1833,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
         return EdgeVec_t();
     }
     //Reduce the vectors to only the rows of interest for the new edge
-    FilterVector(vec,roiSet); 
+    FilterVector(vec,roiSet);
     //Prevent infinite recursion by requiring that the recursion stops if
     //the next round isn't smaller
     if(vec.size() >= nRowIn) return EdgeVec_t(1,*newEdge_p);
@@ -1920,7 +1932,7 @@ EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
 //Specialized function for testing whether all rows in an aignment table are consistent with
 // the consensus of that alignment table
 //Inputs - a vector of alignment table rows (cref)
-//Output - a vector of boolean results (one for each row), true if consistent 
+//Output - a vector of boolean results (one for each row), true if consistent
 std::vector<bool> TestConsistencyGlobal (
                     const AlignmentTable_t & alnTable)
 {
@@ -1932,7 +1944,7 @@ std::vector<bool> TestConsistencyGlobal (
         //Calculate the # of diffs per defined site
         double diffRate = double(diffCount[a]) / double(rowA.nFill);
         bool bRes = (diffRate < MaxDiffRate) ? true : false;
-        resVec.push_back(bRes); 
+        resVec.push_back(bRes);
     }
     return resVec;
 }
@@ -1940,7 +1952,7 @@ std::vector<bool> TestConsistencyGlobal (
 //Specialized function for testing whether all read pairs supporting a breakpoint
 //agree on where the breakpoint should be
 //Inputs - a vector of Breakpoint pairs (cref)
-//Output - a vector of boolean results (one for each row), true if consistent 
+//Output - a vector of boolean results (one for each row), true if consistent
 std::vector<bool> TestConsistencyGlobal( const BreakpointPairVec_t & bppVec) {
     //Initial Value
     int32_t hostMostProximal = bppVec.front().hostProximal;
@@ -1965,10 +1977,10 @@ std::vector<bool> TestConsistencyGlobal( const BreakpointPairVec_t & bppVec) {
     std::vector<bool> resVec;
     for(auto & bpp : bppVec){
         size_t maxDist = (bpp.isSplit) ? Config.max_sc_dist : Stats.max_is;
-        size_t hostDist = (hostMostProximal > bpp.hostProximal) ? 
+        size_t hostDist = (hostMostProximal > bpp.hostProximal) ?
                             hostMostProximal - bpp.hostProximal :
                             bpp.hostProximal - hostMostProximal;
-        size_t virusDist = (virusMostProximal > bpp.virusProximal) ? 
+        size_t virusDist = (virusMostProximal > bpp.virusProximal) ?
                             virusMostProximal - bpp.virusProximal :
                             bpp.virusProximal - virusMostProximal;
         bool bRes = (hostDist > maxDist || virusDist > maxDist) ? false : true;
@@ -1984,7 +1996,7 @@ std::vector<bool> TestConsistencyGlobal( const BreakpointPairVec_t & bppVec) {
 bool TestConsistencyPairwise(const AlignmentTableRow_t & a, const AlignmentTableRow_t & b){
     const std::string & seq1 = a.seq;
     const std::string & seq2 = b.seq;
-    if(seq1.length() != seq2.length()) return false; 
+    if(seq1.length() != seq2.length()) return false;
     for(size_t i = 0; i < seq1.length(); i++){
         char c1 = seq1.at(i);
         char c2 = seq2.at(i);
@@ -2027,7 +2039,7 @@ bool TestConsistencyPairwise( const BreakpointPair_t & a,
             std::swap(aLeft,bLeft);
             std::swap(aRight,bRight);
         }
-        //Test for overlap (as A starts before B, they can only overlap if the end of A 
+        //Test for overlap (as A starts before B, they can only overlap if the end of A
         // is at or past the start of B)
         if(aRight < bLeft){
             return false;

@@ -511,8 +511,8 @@ if not os.path.exists(readsx):
     os.makedirs(readsx)
 ##Edgemapper Command
 edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
-                    f" {cmd_args.host_and_virus_reference} {cmd_args.workdir}"
-                    f" {bam_workspace}" )
+                    f" {cmd_args.host_reference} {cmd_args.virus_reference}"
+                    f" {cmd_args.workdir} {bam_workspace}" )
 if any(missing_file(PATH_DICT[nm]) for nm in ( "rawRes", "hSeq", "vSeq" )):
     execute(edge_mapper_cmd)
 merge_readsx_cmd = ( f"{cmd_args.samtools} merge -r --write-index"
