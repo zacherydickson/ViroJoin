@@ -14,6 +14,7 @@ import re
 import pysam
 import pyfaidx
 from libs import max_is_calc
+import tempfile
 
 
 SURVIRUS_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -149,9 +150,9 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
 CLEANUP_PATH_LIST = [ PATH_DICT[key] for key in [
         "adjRes", "ctgLen", "ctgMap", "edgeCand", "discard", "feAssoc",
         "frawRes", "hBed", "jBed", "juncCand", "regCand", "rrAssoc", "rawRes",
-        "vBed","vNames", 
+        "vBed","vNames",
         #defunct
-        "readSeq", "regSeq" 
+        "readSeq", "regSeq"
     ]
 ]
 CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
@@ -436,24 +437,33 @@ path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
     }.items()
 }
 
+def joint_mapping(outbam):
+    "Maps reads separately to the host and virus genomes and combines the results"
+    ref_dict = {"host": cmd_args.host_reference, "virus": cmd_args.virus_reference}
+    with tempfile.TemporaryDirectory(prefix="tmp_joinmap-",dir=bam_workspace,delete=False) as mapdir:
+        for key,value in ref_dict.items():
+            map_cmd = ( f"{cmd_args.bwa} mem -t {cmd_args.threads} -K {BATCH_SIZE}"
+                        f" -h {MAX_XA} -Y {IS_OPT}"
+                        f" {value}"
+                        f" {path_dict['rfq1']} {path_dict['rfq2']} |"
+                        f" {cmd_args.samtools} sort -@ {cmd_args.threads} -n - |"
+                        f" {cmd_args.samtools} fixmate -m - {mapdir}/{key}.bam"
+                        )
+            execute(map_cmd)
+        merge_cmd = f"{cmd_args.samtools} merge -n {outbam} {mapdir}/host.bam {mapdir}/virus.bam"
+        execute(merge_cmd)
+
+
 #Map the reads to the joint reference
-bwa_cmd = ( f"{cmd_args.bwa} mem -t {cmd_args.threads} -K {BATCH_SIZE}"
-            f" -h {MAX_XA} -Y {IS_OPT}"
-            f" {cmd_args.host_and_virus_reference}"
-            f" {path_dict['rfq1']} {path_dict['rfq2']} | "
-            f" {cmd_args.samtools} sort -@ {cmd_args.threads} -n - >"
-            f" {path_dict['rawBam']}"
-            )
 if missing_file(path_dict["rawBam"]):
-    execute(bwa_cmd)
+    joint_mapping(path_dict["rawBam"])
 filt_expr = f"[X2] <= {cmd_args.maxAltAln} && [Y2] <= {cmd_args.maxAltAln}"
-cleanbam_cmd = (   f" {cmd_args.samtools} fixmate -m {path_dict['rawBam']} - |"
-                    f" {BIN_DICT['cleanbam']} {cmd_args.virus_reference} - - |"
-                    f" {cmd_args.samtools} view -b -e '{filt_expr}' "
-                    f" -o {path_dict['nsrtBam']}"
-                )
+cleanbam_cmd = (f" {BIN_DICT['cleanbam']} {cmd_args.virus_reference} {path_dict['rawBam']} - |"
+                f" {cmd_args.samtools} view -b -e '{filt_expr}' "
+                f" -o {path_dict['nsrtBam']}" )
 if missing_file(path_dict["nsrtBam"]):
     execute(cleanbam_cmd)
+
 #Position sort
 samtools_sort_cmd = (   f"{cmd_args.samtools} sort -@ {cmd_args.threads}"
                         f" -o {path_dict['psrtBam']} {path_dict['nsrtBam']}" )
@@ -557,7 +567,7 @@ if not cmd_args.keep:
         path = CLEANUP_PATH_LIST.pop()
         #Check if the path is a link. We do this first to prevent possible circularity
         # and to prevent undesired deletion of linked data
-        if os.path.islink(path): 
+        if os.path.islink(path):
             os.unlink(path)
         elif os.path.isdir(path): #Check if directory
             dir = os.listdir(path) #Check for files in the folder
@@ -569,6 +579,6 @@ if not cmd_args.keep:
                     CLEANUP_PATH_LIST.append(os.path.join(path,child))
         elif os.path.isfile(path): #its a file, just delete it
             os.remove(path)
-        
+
 
 eprint("Done")
