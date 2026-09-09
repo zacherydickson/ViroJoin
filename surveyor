@@ -66,7 +66,7 @@ cmd_parser.add_argument('virus_reference',
                         help=   'References of a list of viruses in FASTA format;'
                                 'used as prefix for bwa index.')
 cmd_parser.add_argument('host_and_virus_reference',
-                        help='Joint references of host and viruses; used as prefix for bwa index.')
+                        help='Ignored and deprecated')
 cmd_parser.add_argument('--threads', type=int, default=1,
                         help='Number of threads to be used.')
 cmd_parser.add_argument('--bwa', default='bwa', help='BWA path.')
@@ -286,25 +286,28 @@ if missing_file(PATH_DICT["config"]):
 # Generate general distribution of insert sizes
 if missing_file(PATH_DICT["ctgMap"]):
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:
-        reference_fa = pyfaidx.Fasta(cmd_args.host_and_virus_reference)
         i = 1
-        for k in list(reference_fa.keys()):
-            contig_map.write(f"{k} {i}\n")
-            i += 1
+        for reference_fa_file in [cmd_args.host_reference, cmd_args.virus_reference]:
+            reference_fa = pyfaidx.Fasta(reference_fa_file)
+            for k in list(reference_fa.keys()):
+                contig_map.write(f"{k} {i}\n")
+                i += 1
 # count viruses
-reference_fa = pyfaidx.Fasta(cmd_args.virus_reference)
-n_viruses = len(list(reference_fa.keys()))
-#Store the virusIDs
-if missing_file(PATH_DICT["vNames"]):
-    with open(PATH_DICT["vNames"],"w",encoding="utf-8") as virus_names:
-        for key in reference_fa.keys():
-            virus_names.write(f"{key}\n")
+with pyfaidx.Fasta(cmd_args.virus_reference) as reference_fa:
+    n_viruses = len(list(reference_fa.keys()))
+    #Store the virusIDs
+    if missing_file(PATH_DICT["vNames"]):
+        with open(PATH_DICT["vNames"],"w",encoding="utf-8") as virus_names:
+            for key in reference_fa.keys():
+                virus_names.write(f"{key}\n")
 #Store the lengths of all contigs
 if missing_file(PATH_DICT["ctgLen"]):
-    with pyfaidx.Fasta(cmd_args.host_and_virus_reference) as joint_ref, \
-         open(PATH_DICT["ctgLen"],"w",encoding="utf-8") as contig_lengths:
-        for key,seq in joint_ref.items():
-            contig_lengths.write(f"{key}\t{seq.unpadded_len}\n")
+    with open(PATH_DICT["ctgLen"],"w",encoding="utf-8") as contig_lengths:
+        for reference_fa_file in [cmd_args.host_reference, cmd_args.virus_reference]:
+            with pyfaidx.Fasta(reference_fa_file) as reference_fa:
+                for key,seq in reference_fa.items():
+                    contig_lengths.write(f"{key}\t{seq.unpadded_len}\n")
+sys.exit(1);
 #Construct Bam workspace for fastq input
 bam_workspace = os.path.join(cmd_args.workdir,"bam_0")
 path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
