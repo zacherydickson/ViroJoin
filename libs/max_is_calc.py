@@ -1,6 +1,7 @@
 import pyfaidx, os, gzip, pysam
 import math
 import sys
+import tempfile
 
 from .random_pos_generator import RandomPositionGenerator
 
@@ -127,4 +128,50 @@ def get_max_is_from_fq(workdir, fq1, fq2, reference, bwa_exec, threads):
         higher_stddev_is = int(math.sqrt(mean([(x - mean_is) ** 2 for x in general_dist if x > mean_is])))
 
         max_is = mean_is + 5 * higher_stddev_is
+    return max_read_len, max_is
+
+def get_max_is_from_fq_2(workdir, fq1, fq2, host_reference, virus_reference, bwa_exec, threads, samtools_exec):
+    with tempfile.TemporaryDirectory(prefix="tmp_head",dir=workdir) as headdir:
+        with open_by_suffix(fq1) as fq1_f, open_by_suffix(fq2) as fq2_f, \
+            open("%s/head_1.fq" % headdir, "wb" if fq1.endswith('.gz') else "w") as head_fq1, \
+            open("%s/head_2.fq" % headdir, "wb" if fq2.endswith('.gz') else "w") as head_fq2:
+            for i in range(READS_TO_MAP * 4):
+                line1, line2 = next(fq1_f, None), next(fq2_f, None)
+                if not line1 or not line2: break
+                head_fq1.write(line1)
+                head_fq2.write(line2)
+
+        bwa_cmd = "%s mem -Y -t %d %s %s/head_1.fq %s/head_2.fq > %s/head_host.sam" \
+                  % (bwa_exec, threads, host_reference, headdir, headdir, headdir)
+        print(bwa_cmd,file=sys.stderr)
+        os.system(bwa_cmd)
+        bwa_cmd = "%s mem -Y -t %d %s %s/head_1.fq %s/head_2.fq > %s/head_virus.sam" \
+                  % (bwa_exec, threads, virus_reference, headdir, headdir, headdir)
+        print(bwa_cmd,file=sys.stderr)
+        os.system(bwa_cmd)
+        merge_cmd = f"{samtools_exec} merge {headdir}/head.sam {headdir}/head_host.sam {headdir}/head_virus.sam"
+        print(merge_cmd,file=sys.stderr)
+        os.system(merge_cmd)
+
+        max_read_len = 0
+        with pysam.AlignmentFile("%s/head.sam" % headdir) as head_f:
+            general_dist = []
+            for read in head_f.fetch(until_eof=True):
+                if read.is_proper_pair and not read.is_secondary and not \
+                        read.is_supplementary and 0 < read.template_length:
+                    general_dist.append(read.template_length)
+                    max_read_len = max(max_read_len, read.query_length)
+
+                if len(general_dist) > GEN_DIST_SIZE: break
+            
+            if len(general_dist) == 0:
+                raise ValueError(f"None of the first {READS_TO_MAP} reads map to"
+                                 f" the joint genome - Could not estimate insert"
+                                 f" size parameters."
+                                 f" Check the input files, input references, or"
+                                 f" provide parameters with the --isParams option")
+            mean_is = int(mean(general_dist))
+            higher_stddev_is = int(math.sqrt(mean([(x - mean_is) ** 2 for x in general_dist if x > mean_is])))
+
+            max_is = mean_is + 5 * higher_stddev_is
     return max_read_len, max_is
