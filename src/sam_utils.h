@@ -22,6 +22,7 @@ std::string get_cigar_code(const uint32_t* cigar, int n_cigar) {
     }
     return ss.str();
 }
+
 std::string get_cigar_code(bam1_t* r) {
     return get_cigar_code(bam_get_cigar(r), r->core.n_cigar);
 }

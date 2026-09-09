@@ -186,4 +186,19 @@ std::string get_seqrc(const std::string & seq) {
     return rc;
 }
 
+std::string ssw_alignment_to_string(StripedSmithWaterman::Alignment & aln) {
+    std::stringstream ss;
+    ss  << "Query:" << aln.query_begin << "-" << aln.query_end << " "
+        << "Ref:" << aln.ref_begin << "-" << aln.ref_end << "(" << aln.ref_end_next_best << ") "
+        << "Score:" << aln.sw_score << "(" << aln.sw_score_next_best << ") "
+        << "Mismatches:" << aln.mismatches
+        << "CIGAR:" << aln.cigar_string << "(";
+    for (size_t i = 0; i < aln.cigar.size(); i++) {
+        ss << bam_cigar_oplen(aln.cigar[i]) << bam_cigar_opchr(aln.cigar[i]);
+    }
+    ss << ")";
+    return ss.str();
+}
+
+
 #endif //SURVEYOR_CLUSTER_H

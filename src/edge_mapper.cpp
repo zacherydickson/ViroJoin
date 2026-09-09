@@ -323,12 +323,13 @@ int main(int argc, const char* argv[]) {
 void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
                 AlignmentMap_t & alnMap)
 {
-    int nAlignFilterSteps = 6;
+    int nAlignFilterSteps = 7;
     enum AlignFilterSteps {
         SSW_ALIGNMENT = 0,
+        LEN_SCORE_DOUBLE_CLIP1,
         DISTAL_CLIP,
         CHECK_IMPROVEMENT,
-        LEN_SCORE_DOUBLE_CLIP,
+        LEN_SCORE_DOUBLE_CLIP2,
         READ_LOW_COMPLEXITY,
         REGION_LOW_COMPLEXITY
     };
@@ -361,8 +362,8 @@ void AlignRead( const Read_pt & read, const RegionSet_t & regSet,
                     case CHECK_IMPROVEMENT: //Is alignment better than the other strand? (or first)
                         bPass = curAln.sw_score > aln.sw_score;
                         break;
-                    case LEN_SCORE_DOUBLE_CLIP: // alignment length, score, clippedness
-                        //curAln is better than previous best
+                    case LEN_SCORE_DOUBLE_CLIP1: // alignment length, score, clippedness
+                    case LEN_SCORE_DOUBLE_CLIP2: // alignment length, score, clippedness
                         bPass = accept_alignment(curAln, Config.min_sc_size);
                         break;
                     case READ_LOW_COMPLEXITY: // read low complexity filter
@@ -829,16 +830,19 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
         //TODO: Justified if regions are sufficiently large
         return false;
     }
+
     const std::string & ref = reg->sequence;
     //Structure for constructing the new cigar vector,
     // need to be able to modify either end so a deque makes sense
     std::deque<uint32_t> cigarDeque(aln.cigar.begin(),aln.cigar.end());
-    using Push = void (std::deque<uint32_t>::*)(const uint32_t &);
-    using Pop = void (std::deque<uint32_t>::*)();
     //Data structure for configuring the extension
     struct ExtensionState { 
+        using Push = void (std::deque<uint32_t>::*)(const uint32_t &);
+        using Pop = void (std::deque<uint32_t>::*)();
+        using Front = uint32_t & (std::deque<uint32_t>::*)();
         Push push;
         Pop pop;
+        Front front;
         int32_t q, r;
         int8_t step;
         bool update(size_t qLen) {
@@ -863,6 +867,7 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
         //Set the cigar update rules
         extState.push = &std::deque<uint32_t>::push_back;
         extState.pop = &std::deque<uint32_t>::pop_back;
+        extState.front = &std::deque<uint32_t>::back;
         //Update the final alignment position
         aln.query_end += clipLen;
         aln.ref_end += clipLen;
@@ -875,39 +880,46 @@ bool DistalClippedAlignmentProcessing(  StripedSmithWaterman::Alignment & aln,
         //Set the cigar update rules
         extState.push = &std::deque<uint32_t>::push_front;
         extState.pop = &std::deque<uint32_t>::pop_front;
+        extState.front = &std::deque<uint32_t>::front;
         //Update the final alignment position
         aln.query_begin -= clipLen;
         aln.ref_begin -= clipLen;
     }
     //Remove the distal clip operation
     (cigarDeque.*extState.pop)();
-    int opLen = 0;
-    char opChar = 'M';
+    //Set the current operation to the current distal operation, and remove that op as well
+    // We are assuming the provided alignment has at least two ops (the distal clip, and a non-clip)
+    // i.e. we are assuming the alignment has aligned bases!
+    uint32_t op = (cigarDeque.*extState.front)();
+    int opLen = bam_cigar_oplen(op);
+    char opChar = bam_cigar_op(op);
+    (cigarDeque.*extState.pop)();
     //Extend in the distal direction and construct cigar operations and 
     // update the alignment as appropriate (score and num_mismatches)
     while( extState.update(query.length()) ) {
         char curOp;
         if(query.at(extState.q) == ref.at(extState.r)) {
-            curOp = 'M';
+            curOp = BAM_CEQUAL;
             aln.sw_score += AlignerMatchScore;
         } else {
-            curOp = 'X';
+            curOp = BAM_CDIFF;
             aln.sw_score -= AlignerMismatchPenalty;
             aln.mismatches++;
         }
         if(curOp == opChar) { //Extend the current operation
             opLen++;
             continue;
-        } else if(opLen) { // store the previous operation (if it exists)
-            (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
-            //Then reset the length
-            opLen = 1;
         }
-        opChar = curOp;
-    }
-    if(opLen) { //Store the last cigar operation
+        // store the previous operation (if it exists)
+        // We are assuming the previous operation has some length, since we 
+        // started with the most distal non-clip operation
         (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
+        //Then reset the length
+        opChar = curOp;
+        opLen = 1;
     }
+    //Store the last cigar operation
+    (cigarDeque.*extState.push)(bam_cigar_gen(opLen,opChar));
     //Update the alignment's cigar vector and string
     aln.cigar.resize(cigarDeque.size());
     aln.cigar.assign(cigarDeque.begin(),cigarDeque.end());
