@@ -36,7 +36,7 @@ class ClippedCXA : public CXA {
         bool is_r1() const { return flag & IS_R1; }
         bool primary_is_rev() const { return flag & PRIMARY_IS_REVERSED; }
         std::string to_string() const {
-            return CXA::to_string() + " " + std::to_string(flag); 
+            return CXA::to_string() + " " + std::to_string(flag);
         }
 };
 
@@ -72,7 +72,7 @@ struct MateAlignmentInfo_t {
     static bool Part_Is_Right(ALN_PARTS partType) {
         return partType == ANCHOR_RIGHT || partType == CLIP_RIGHT;
     }
-    
+
     bool add(ClippedCXA_spt part, ALN_PARTS partType) {
         //Cannot add part if it already exists
         if(this->parts[partType]) { return false; }
@@ -191,7 +191,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 //Inputs - A path to the viral reference in fasta format
 //	 - A path to the working directory
 //	 - A path to the bam workspace
-//Outputs - A BEDPE formated file 
+//Outputs - A BEDPE formated file
 //Each entry describes a fragment, the breakpoint is downstream of the
 //  first interval, and upstream of the second interval
 //  I.e the first interval's offset and end are junction distal and proximal
@@ -299,7 +299,7 @@ bool AddMateAlignmentInfoToFragment(const MateAlignmentInfo_t obj,
 //Given a set of Alignment Information objects, attempt to add clip information
 //to the anchors
 //Process: iterate over alnInfoList, skipping over non-anchors and leaving them
-// as is. Pull the anchor object from the list as a parent object. Try to create 
+// as is. Pull the anchor object from the list as a parent object. Try to create
 // a new object from the parent and each clip. for each on that works insert it
 // back into the list before the item previously following the parent
 //Note: If an anchor does not have any clipps added to it, it is removed
@@ -317,13 +317,13 @@ void AddClipsToFragmentInfo (   MateAlnInfoList_t & alnInfoList,
         ClippedCXA_spt anchor = parentObj.get_alignments()[0];
         //Pull the anchor out of the list to build new objects
         it=alnInfoList.erase(it);
-        //If the primary alignment was reversed, but this alternative alignment 
+        //If the primary alignment was reversed, but this alternative alignment
         //was not, then the clip sequence corresponds to the other side of the alignment
         bool bAnchorSwap = (anchor->bRev != anchor->primary_is_rev());
         for(const ClippedCXA_spt & clip : clips){
             bool bClipLeft = clip->is_left();
             MateAlignmentInfo_t obj(parentObj);
-            MateAlignmentInfo_t::ALN_PARTS partType = 
+            MateAlignmentInfo_t::ALN_PARTS partType =
                 (bClipLeft == bAnchorSwap) ?
                     MateAlignmentInfo_t::CLIP_RIGHT :
                     MateAlignmentInfo_t::CLIP_LEFT;
@@ -370,11 +370,11 @@ FragmentInfo_t ConstructFragmentInfo( bam_hdr_t* header,
                 continue;
             }
             uint8_t clipSide = ccxa->clipSide();
-            for( CXA::CLIP_SIDE side : 
+            for( CXA::CLIP_SIDE side :
                     {CXA::UNCLIPPED, CXA::LEFT_CLIPPED, CXA::RIGHT_CLIPPED} )
             {
                 //Figure out which part of an alignment this CXA represents
-                MateAlignmentInfo_t::ALN_PARTS part; 
+                MateAlignmentInfo_t::ALN_PARTS part;
                 switch (side) {
                     case CXA::UNCLIPPED:
                         //Actual clips never hit this category, so no need to skip
@@ -465,10 +465,10 @@ int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag){
 
 void ParseReadXA (  bam1_t *read, std::string primaryContig,
 		    std::vector<CXA> & out){
-    uint8_t * nm = bam_aux_get(read,"NM"); 
+    uint8_t * nm = bam_aux_get(read,"NM");
     int nmVal = (nm) ? bam_aux2i(nm) : 0;
 
-    std::string xaStr = primaryContig + "," + 
+    std::string xaStr = primaryContig + "," +
 			((read->core.flag & BAM_FREVERSE) ? "-" : "+")  +
 			std::to_string(read->core.pos+1) + "," +
 			"1M" + "," + std::to_string(nmVal);
@@ -491,9 +491,9 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
     }
 }
 
-//Given a vector of alignments, stitches combinations of alignments into 
+//Given a vector of alignments, stitches combinations of alignments into
 // consistent fragments and outputs them to the provided ofstream
-//Each alignment may have alternative alignments, any of which is considered 
+//Each alignment may have alternative alignments, any of which is considered
 //  Equally valid
 //Also considers all valid clipping arrangements for an alignment,
 //  only the consistent combinations of alt alignments and clip configurations
@@ -583,14 +583,14 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
 //Given an open bam file, and a read object to act as lookahead buffer, loads
 // reads from the bam file into a vector until a read with a different id is
 // loaded, this is retained in the lookahead buffer
-// a null ptr is returned if no read can be read from the bam file, and the 
+// a null ptr is returned if no read can be read from the bam file, and the
 // lookahed buffer is empty
 //The caller is responsible for detroying and freeing all bam1_t objects in the
 //  vector
 //Inputs - an open_samFile_t pointer to a valid open bam file
 //       - a valid bam1_t object to act as a lookahead buffer
 //Output - an AlnVector_pt object, null in the case of an empty vector
-//Exceptions - 
+//Exceptions -
 AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf) {
     AlnVector_pt alnVector( new AlnVector_t());
     std::string qName = "";
@@ -600,7 +600,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf) {
     if(read_buf){
         alnVector->push_back(bam_dup1(read_buf));
         parseRes = ParseAlnID(read_buf,qName,flag);
-        if(parseRes){ 
+        if(parseRes){
             char buf[100];
             sprintf(buf,"ID parse error: %d",parseRes);
             throw std::invalid_argument(buf);
@@ -611,7 +611,7 @@ AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf) {
     while ((readRes = sam_read1(alnFile->file, alnFile->header, read_buf)) >= 0) {
         std::string curQName("");
         parseRes = ParseAlnID(read_buf,curQName,flag);
-        if(parseRes){ 
+        if(parseRes){
             char buf[100];
             sprintf(buf,"ID parse error: %d",parseRes);
             throw std::invalid_argument(buf);
