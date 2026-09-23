@@ -314,6 +314,8 @@ bool CReadBlock::process(bam_hdr_t* hdr, const VirusNameSet_t & virusNameSet) {
 	for(const auto & str : *(XAStrSet[i])){
 	    //Skip the decoy XAStr
 	    if(str == primaryXAStr[i]) continue;
+            //Skip empty xaStrings resulting from unmapped mates of mapped reads
+            if(str.empty()) continue;
 	    xaStr += str + ';';
 	}
 	bam_aux_update_str(read,"XA",xaStr.size(),xaStr.c_str());

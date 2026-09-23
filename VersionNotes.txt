@@ -73,3 +73,5 @@ Version 2.1.0
         Including a joint reference in the call is now deprecated, with a warning
 Version 2.1.1
 	Fixed Bug Where the time of executing commands was not properly printed
+Version 2.1.2
+	Fixed a bug where mates mapping to only host/viral could lead to broken XA tags
