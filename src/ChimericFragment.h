@@ -45,7 +45,7 @@ class ChimericFragment_t {
     {}
     ChimericFragment_t(const ChimericFragment_t & other) :
         name(other.name), chr(other.chr), off(other.off),
-        end(other.end), flag(other.flag) 
+        end(other.end), flag(other.flag)
     {
     }
     ChimericFragment_t( const std::string & n,
@@ -88,7 +88,7 @@ class ChimericFragment_t {
     bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
     bool is_split(IV_IDX ivIdx) const { return this->flag[ivIdx] & IS_SPLIT; }
     bool not_chimeric() const;
-    size_t proximal_pos(IV_IDX ivIdx) const { 
+    size_t proximal_pos(IV_IDX ivIdx) const {
         return (flag[ivIdx] & OPENS_LEFT) ? off[ivIdx]+1 : end[ivIdx];
     }
     std::array<size_t,2> proximal_pos() const {
@@ -121,7 +121,7 @@ class ChimericFragment_t {
 //          which is consistent with the existing fragment and the alignment
 bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnchor,
                                         bool isLeft, bool isR1, uint8_t clipSide,
-                                        ChimericFragment_t::IV_IDX ivIdx) 
+                                        ChimericFragment_t::IV_IDX ivIdx)
 {
     uint16_t & flag = this->flag[ivIdx];
     //Step one: Assign up and down based on the host sequence
@@ -135,7 +135,7 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
     //Gt information on where the breakpoint is relative to the alignment
     bool bOpensRight;
     if(isClip || isAnchor){
-        bOpensRight = isLeft; 
+        bOpensRight = isLeft;
         if(isClip && aln.bRev) {
             bOpensRight = !bOpensRight;
         }
@@ -144,7 +144,7 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
     }
     //Get the information on whehter the terminal bases of the read are mapped
     CXA::CLIP_SIDE terminalSide;
-    if(isClip){ 
+    if(isClip){
         terminalSide = (bOpensRight) ? CXA::LEFT_CLIPPED : CXA::RIGHT_CLIPPED;
     } else {
         terminalSide = (aln.bRev) ? CXA::RIGHT_CLIPPED : CXA::LEFT_CLIPPED;
@@ -177,7 +177,7 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
         //Check if the new alignment forms a discordant pair
         if( (bOpensRight && (end > this->end[ivIdx])) || //New says open right and is right
             (!bOpensRight && (off < this->off[ivIdx])) ) //New says open left and is left
-        { 
+        {
             //TODO: Account for clipping (the aligned ends of the old might be mapped in the new)
             return false;
         }
@@ -234,11 +234,11 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
 //  Given a tie, the fragment with more sources is better
 //Inputs - A chimericFragment to which to compare
 //Output -  -1 if this fragment is dominated by the other
-//          0 if incomparable 
+//          0 if incomparable
 //          1 if this fragment dominates the other, or the fragments are equal
 //NOTE: If either fragment is not complete (!is_complete) or
 //  not chimeric (not_chimeric), behaviour is undefined
-int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) const 
+int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) const
 {
     for(IV_IDX ivIdx : {IV1, IV2}){
         //Chr must match to be compared
@@ -282,7 +282,7 @@ int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) c
     }
     //Proximal positions on any split intervals match
     // Assess which fragment has more R1,R2 support on each interval
-    bool OtherHasMoreSupport = !(   (this->n_reads(IV1) + this->n_reads(IV2)) >= 
+    bool OtherHasMoreSupport = !(   (this->n_reads(IV1) + this->n_reads(IV2)) >=
                                     (other.n_reads(IV1) + other.n_reads(IV2)) );
     //If the fragments are both double split
     if(nSplits[0] == 2){
@@ -296,8 +296,8 @@ int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) c
         //Skip any split intervals
         if(flag[ivIdx] & IS_SPLIT) { continue; }
         //Get Distal-proximal distances
-        int dpDist[2] = { 
-            std::abs(int(this->distal_pos(ivIdx)) - int(this->proximal_pos(ivIdx))), 
+        int dpDist[2] = {
+            std::abs(int(this->distal_pos(ivIdx)) - int(this->proximal_pos(ivIdx))),
             std::abs(int(other.distal_pos(ivIdx)) - int(other.proximal_pos(ivIdx)))
         };
         //If the distances are different
