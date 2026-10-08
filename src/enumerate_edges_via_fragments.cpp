@@ -349,7 +349,7 @@ ReadRegionAssocVec_t ConstructReadRegionAssociations(
                         (rid == prop.endpoints.first) ?
                             ChimericFragment_t::IV1 : ChimericFragment_t::IV2;
                     //Skip read region associations already observed
-                    if(!seenRR.insert(fName + std::to_string(rid)).second) {
+                    if(!seenRR.insert(fName + ":MYUNIQUESEP;" + std::to_string(rid)).second) {
                         continue;
                     }
                     ReadRegionAssoc_t rrAssoc = {fName,0,rid};
