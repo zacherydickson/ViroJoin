@@ -67,4 +67,21 @@ std::string to_upper(const std::string & str) {
     return out;
 }
 
+//Removes leading and trailing instances of characters from the toStrip string
+//Returns the resulting string
+//From https://stackoverflow.com/questions/1798112/removing-leading-and-trailing-spaces-from-a-string
+//Answer from: https://stackoverflow.com/users/87234/gmannickg
+std::string strip(const std::string& str,
+                 const std::string& toStrip)
+{
+    const auto strBegin = str.find_first_not_of(toStrip);
+    if (strBegin == std::string::npos)
+        return ""; // no content
+
+    const auto strEnd = str.find_last_not_of(toStrip);
+    const auto strRange = strEnd - strBegin + 1;
+
+    return str.substr(strBegin, strRange);
+}
+
 #endif
