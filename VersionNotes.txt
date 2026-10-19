@@ -77,3 +77,5 @@ Version 2.1.2
 	Fixed a bug where mates mapping to only host/viral could lead to broken XA tags
 Versions 2.2.3
         Fixed a bug where read names which are prefixes of other read names could lead to missing read-region associations resulting in a fatal error
+Version 2.1.4
+	Fixed a bug caused by a known bug in libstdc++ with regex on long lines which resulted in segmentation faults when outputing breakpoint sequences

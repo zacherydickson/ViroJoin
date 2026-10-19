@@ -6,7 +6,6 @@
 #include <filesystem>
 #include <forward_list>
 #include <memory>
-#include <regex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -1581,13 +1580,12 @@ void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
     AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
     std::string consensus = GenerateConsensus(alnTable);
     //Split the consensus and strip off leading and trailing N's
-    std::regex rgx("^N+|N+$");
-    std::string hostSeq = std::regex_replace(
-                            consensus.substr(0,edge.hostRegion->sequence.length()),
-                            rgx,"");
-    std::string virusSeq = std::regex_replace(
-                            consensus.substr(edge.hostRegion->sequence.length()),
-                            rgx,"");
+    std::string hostSeq = strip(    consensus.substr(0,
+                                        edge.hostRegion->sequence.length()),
+                                    "N");
+    std::string virusSeq = strip(   consensus.substr(
+                                        edge.hostRegion->sequence.length()),
+                                    "N");
     char hostSuffix = (edge.hostRegion->opensLeft()) ? 'R' : 'L';
     char virusSuffix = (edge.virusRegion->opensLeft()) ? 'R' : 'L';
     hostOut << '>' << id << '_' << hostSuffix << '\n' <<
