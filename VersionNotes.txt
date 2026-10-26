@@ -79,5 +79,6 @@ Versions 2.2.3
         Fixed a bug where read names which are prefixes of other read names could lead to missing read-region associations resulting in a fatal error
 Version 2.1.4
 	Fixed a bug caused by a known bug in libstdc++ with regex on long lines which resulted in segmentation faults when outputing breakpoint sequences
-Version 2.1.5
-	Allowed using zero to unset max_alt_aln; made this default behaviour
+Version 2.2.0
+	Setting --maxAltAln to zero now disables the maxAltAln filter completely; This is now default behaviour
+        Based on analysis finding that this setting was no better than chance for discriminating real junction spanning fragments
