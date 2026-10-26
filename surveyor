@@ -79,9 +79,9 @@ cmd_parser.add_argument('--excluded_regions_bed', \
                                 ' uninteresting portions of the genome')
 cmd_parser.add_argument('--minClipSize', type=int, default=20, \
                         help='Min size for a clip to be considered.')
-cmd_parser.add_argument('--maxAltAln', type=int, default=20,
+cmd_parser.add_argument('--maxAltAln', type=int, default=0,
                         help='Max number of alternative alignments for a \
-                                read to be considered')
+                                read to be considered; 0 means no limit')
 cmd_parser.add_argument('--maxSCDist', type=int, default=10,
                         help='Max SC distance.')
 cmd_parser.add_argument('--clean_first', action='store_true',
@@ -407,11 +407,13 @@ def map_clips(prefix, reference):
     if missing_file(l_path_dict["mem.bam"]):
         execute(bwa_mem_cmd)
 
-    map_clips_filt_expr = f"[X2] <= {cmd_args.maxAltAln}"
+    map_clips_filt_expr =""
+    if cmd_args.maxAltAln > 0:
+        map_clips_filt_expr = f"-e [X2] <= {cmd_args.maxAltAln}"
     merge_cmd = (   f"{cmd_args.samtools} cat {l_path_dict['aln.bam']}"
                     f" {l_path_dict['mem.bam']} |"
                     f" {BIN_DICT['addX2tag']} - - |"
-                    f" {cmd_args.samtools} view -b -e '{map_clips_filt_expr}'"
+                    f" {cmd_args.samtools} view -b '{map_clips_filt_expr}'"
                     f" -o {l_path_dict['bam']}"
                 )
     if missing_file(l_path_dict["bam"]):
@@ -457,9 +459,11 @@ def joint_mapping(outbam):
 #Map the reads to the joint reference
 if missing_file(path_dict["rawBam"]):
     joint_mapping(path_dict["rawBam"])
-filt_expr = f"[X2] <= {cmd_args.maxAltAln} && [Y2] <= {cmd_args.maxAltAln}"
+filt_expr = ""
+if cmd_args.maxAltAln > 0:
+    filt_expr = f"-e [X2] <= {cmd_args.maxAltAln} && [Y2] <= {cmd_args.maxAltAln}"
 cleanbam_cmd = (f" {BIN_DICT['cleanbam']} {cmd_args.virus_reference} {path_dict['rawBam']} - |"
-                f" {cmd_args.samtools} view -b -e '{filt_expr}' "
+                f" {cmd_args.samtools} view -b '{filt_expr}' "
                 f" -o {path_dict['nsrtBam']}" )
 if missing_file(path_dict["nsrtBam"]):
     execute(cleanbam_cmd)
