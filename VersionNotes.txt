@@ -82,3 +82,5 @@ Version 2.1.4
 Version 2.2.0
 	Setting --maxAltAln to zero now disables the maxAltAln filter completely; This is now default behaviour
         Based on analysis finding that this setting was no better than chance for discriminating real junction spanning fragments
+Version 2.2.1
+        Fixed a bug with exploratory mode where a read could be identified as a duplicate if its distal ends were matched by two (or more) fragments, even though no single fragment matched on both ends
