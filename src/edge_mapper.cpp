@@ -777,13 +777,22 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
         const ReadPairAlnSummary_t & summary = pair_ptr->second;
         std::vector<size_t> & hSupIdxVec = hostPosition2supportIdxMap[summary.hostDistal];
         std::vector<size_t> & vSupIdxVec = virusPosition2supportIdxMap[summary.virusDistal];
-        bool bSeenHuman = (hSupIdxVec.size() > 0);
-        bool bSeenVirus = (vSupIdxVec.size() > 0);
-        //If Exploratory, then one end may be non-unique
-        //otherwise both must be unique
-        if( (!ExploratoryDeduplication && (bSeenHuman || bSeenVirus)) ||
-            (bSeenHuman && bSeenVirus) )
-        {
+        std::vector<size_t> dSupIdxVec;
+        if(ExploratoryDeduplication) {
+            fprintf(stderr, "pre Intersect\n");
+            //Identify the preceeding fragments, if any, with both ends matching
+            std::set_intersection(  hSupIdxVec.begin(), hSupIdxVec.end(),
+                                    vSupIdxVec.begin(), vSupIdxVec.end(),
+                                    std::back_inserter(dSupIdxVec) );
+        } else {
+            fprintf(stderr, "pre Union %lu %lu %lu\n",hSupIdxVec.size(), vSupIdxVec.size(), dSupIdxVec.size());
+            //Identify the preceeding fragments, with either end matching
+            std::set_union(  hSupIdxVec.begin(), hSupIdxVec.end(),
+                             vSupIdxVec.begin(), vSupIdxVec.end(),
+                             std::back_inserter(dSupIdxVec) );
+        }
+        fprintf(stderr, "post Intersect/Union %lu\n",dSupIdxVec.size());
+        if(dSupIdxVec.size()) {
             toRemoveSet.insert(frag);
         }
         hSupIdxVec.push_back(supportIdx);
