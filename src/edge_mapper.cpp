@@ -791,6 +791,14 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
         }
         if(dSupIdxVec.size()) {
             toRemoveSet.insert(frag);
+            for(size_t supIdx : dSupIdxVec) {
+                Mtx.lock();
+                frag->markDuplicateOf(supportVec[supIdx]->first);
+                Mtx.unlock();
+                Mtx.lock();
+                supportVec[supIdx]->first->markDuplicateOf(frag);
+                Mtx.unlock();
+            }
         }
         hSupIdxVec.push_back(supportIdx);
         vSupIdxVec.push_back(supportIdx);

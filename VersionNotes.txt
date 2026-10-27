@@ -84,3 +84,5 @@ Version 2.2.0
         Based on analysis finding that this setting was no better than chance for discriminating real junction spanning fragments
 Version 2.2.1
         Fixed a bug with exploratory mode where a read could be identified as a duplicate if its distal ends were matched by two (or more) fragments, even though no single fragment matched on both ends
+Version 2.3.1
+	Updated Duplicate Handling to reduce cases where a duplicate might be used to support a separate edge despite a marked duplicate being used

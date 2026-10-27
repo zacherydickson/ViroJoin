@@ -200,20 +200,22 @@ bool ReadPair_t::isUsed() {
     //Short circuit, no need to check duplicates
     if(this->used) { return this->used; }
     //Check each duplicate to see if it has been used, if so mark this one as used
-    //Note that we directly check the members and don not set this objects's used member
+    //Note that we directly check the other's used member
     //  this is to prevent recursion, as we are not treating duplication as fully transitive
     //  ex. given A <=> B <=> C: If A is used, B is considered used, when checked, but C would not be
     //  This could happen in where A and B share a 5` end, but not a 3` end, and B and C share the 3` end but not
     //  the 5` end. In that case A and C do not share any termini
+    //However, we do set this elements used to true, which allows partial transitivity
+    //In the example case, if C was used prior to A, then it would not be marked used
     for( const ReadPair_pt & dup : this->duplicates) {
         if(dup->used) {
+            this->used = true;
             return true;
         }
     }
     //Neither this fragment, nor any of its duplicates have been used
     return false;
 }
-
 
 //Object describing a genomic location containing a
 //candidate junction
