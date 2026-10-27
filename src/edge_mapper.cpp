@@ -755,8 +755,8 @@ void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
 //         - an alignment map to inform the deduplication
 //Output - None, modifies the given object
 void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
-    std::unordered_set<int32_t> hostPositionSet;
-    std::unordered_set<int32_t> virusPositionSet;
+    std::unordered_map<int32_t,std::vector<size_t>> hostPosition2supportIdxMap;
+    std::unordered_map<int32_t,std::vector<size_t>> virusPosition2supportIdxMap;
     ReadPairSet_t toRemoveSet;
     typedef const std::pair<const ReadPair_pt,ReadPairAlnSummary_t>* rpp_pt;
     std::vector<rpp_pt> supportVec;
@@ -770,21 +770,24 @@ void DeduplicateEdge(Edge_t & edge ,const AlignmentMap_t & alnMap) {
             }
         );
     //Retain the first (highest scoring) read pair for any given pair of distal coordinates
-    for( rpp_pt pair_ptr : supportVec ) {
+    //for( rpp_pt pair_ptr : supportVec ) {
+    for( size_t supportIdx = 0; supportIdx < supportVec.size(); supportIdx++ ) {
+        rpp_pt pair_ptr = supportVec[supportIdx];
         const ReadPair_pt & frag = pair_ptr->first;
         const ReadPairAlnSummary_t & summary = pair_ptr->second;
-        bool bSeenHuman = hostPositionSet.count(summary.hostDistal);
-        bool bSeenVirus = virusPositionSet.count(summary.virusDistal);
+        std::vector<size_t> & hSupIdxVec = hostPosition2supportIdxMap[summary.hostDistal];
+        std::vector<size_t> & vSupIdxVec = virusPosition2supportIdxMap[summary.virusDistal];
+        bool bSeenHuman = (hSupIdxVec.size() > 0);
+        bool bSeenVirus = (vSupIdxVec.size() > 0);
         //If Exploratory, then one end may be non-unique
         //otherwise both must be unique
         if( (!ExploratoryDeduplication && (bSeenHuman || bSeenVirus)) ||
             (bSeenHuman && bSeenVirus) )
         {
             toRemoveSet.insert(frag);
-            continue;
         }
-        hostPositionSet.insert(summary.hostDistal);
-        virusPositionSet.insert(summary.virusDistal);
+        hSupIdxVec.push_back(supportIdx);
+        vSupIdxVec.push_back(supportIdx);
     }
     for(const auto & frag : toRemoveSet){
         edge.removeSupport(frag);
