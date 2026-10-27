@@ -168,26 +168,52 @@ struct Read_pt_HashFunctor {
 //    }
 //};
 
+
+struct ReadPair_t;
+
+typedef std::shared_ptr<ReadPair_t> ReadPair_pt;
+typedef std::unordered_map<std::string,ReadPair_pt> Name2ReadPairMap_t;
+typedef std::unordered_set<ReadPair_pt> ReadPairSet_t;
+typedef std::unordered_map<std::string,Read_pt> Name2ReadMap_t;
+
 struct ReadPair_t {
     ReadPair_t() : R1(nullptr), R2(nullptr), used(false){}
     Read_pt R1;
     Read_pt R2;
     protected:
     bool used;
+    ReadPairSet_t duplicates;
     public:
-    bool isUsed() const { return this->used;}
-    void setUsed(bool used) { this->used = used; }
-    void markUsed() {this->used = true; }
-    void markUnused() {this->used = false; }
+    bool isUsed();
+    void setUsed(bool used) { (used) ? markUsed() : markUnused(); }
+    void markUsed() { this->used = true; }
+    void markUnused() { this->used = false; }
+    void markDuplicateOf(const ReadPair_pt & other) {
+        this->duplicates.insert(other);
+    }
     Read_pt & operator[](bool bR1){ return (bR1) ? R1 : R2; }
     Read_pt & getRead(bool bR1){ return (bR1) ? R1 : R2; }
 };
 
+//Return whether this fragment has been used, or if a fragment of which this fragment is a duplicate is used
+bool ReadPair_t::isUsed() {
+    //Short circuit, no need to check duplicates
+    if(this->used) { return this->used; }
+    //Check each duplicate to see if it has been used, if so mark this one as used
+    //Note that we directly check the members and don not set this objects's used member
+    //  this is to prevent recursion, as we are not treating duplication as fully transitive
+    //  ex. given A <=> B <=> C: If A is used, B is considered used, when checked, but C would not be
+    //  This could happen in where A and B share a 5` end, but not a 3` end, and B and C share the 3` end but not
+    //  the 5` end. In that case A and C do not share any termini
+    for( const ReadPair_pt & dup : this->duplicates) {
+        if(dup->used) {
+            return true;
+        }
+    }
+    //Neither this fragment, nor any of its duplicates have been used
+    return false;
+}
 
-typedef std::shared_ptr<ReadPair_t> ReadPair_pt;
-typedef std::unordered_map<std::string,ReadPair_pt> Name2ReadPairMap_t;
-typedef std::unordered_set<ReadPair_pt> ReadPairSet_t;
-typedef std::unordered_map<std::string,Read_pt> Name2ReadMap_t;
 
 //Object describing a genomic location containing a
 //candidate junction
