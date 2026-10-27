@@ -100,8 +100,7 @@ bool ConstructBamEntry( const Read_pt & query, const Region_pt & subject,
                         bam1_t* entry);
 breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset);
 call_t ConstructCall(   int id, const Edge_t & edge,
-                        const AlignmentMap_t & alnMap,
-                        const ReadPairSet_t & used);
+                        const AlignmentMap_t & alnMap);
 void ConstructEdgeQueue(const EdgeVec_t & edgeVec,
                         CBranchedEdgeQueue & edgeQueue);
 //JunctionInterval_t ConstructJIV(char strand, bool isVirus,
@@ -118,7 +117,7 @@ size_t FillStringFromAlignment( std::string & outseq,
                                 const std::string & inseq,
                                 size_t offset, size_t maxLen,
                                 const std::vector<uint32_t> & cigarVec);
-void FilterEdgeVec(EdgeVec_t & edgeVec, const ReadPairSet_t * used = nullptr);
+void FilterEdgeVec(EdgeVec_t & edgeVec);
 void FilterHighInsertReads(Edge_t & edge, const AlignmentMap_t & alnMap);
 void FilterSuspiciousReads(Edge_t & edge, const AlignmentMap_t & alnMap);
 template<class T>
@@ -148,19 +147,17 @@ void LoadRegionSeq( const std::string & regionsFName,
                     Name2RegionMap_t & nameMap);
 void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
 void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                std::ofstream & out, const ReadPairSet_t & used);
+                std::ofstream & out);
 void OuputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                const std::string & readDir, const ReadPairSet_t & used);
+                const std::string & readDir);
 void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
-                    const Edge_t & edge, const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used);
+                    const Edge_t & edge, const AlignmentMap_t & alnMap);
 void OutputEdgesByQ(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     const Name2ReadMap_t & readNameMap,
                     const std::string & resFName, const std::string & readDir,
                     const std::string & hostbpFName,
                     const std::string & virusbpFName);
-bool PassesEffectiveReadCount(  const Edge_t & edge,
-                                const ReadPairSet_t * used = nullptr);
+bool PassesEffectiveReadCount(  const Edge_t & edge );
 void ProcessEdge(int id,Edge_t & edge, const AlignmentMap_t & alnMap);
 void ProcessEdges(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
 //EdgeVec_t RecursiveSplitEdge(Edge_t & edge, std::vector<ReadPair_pt> rowLabelVec,
@@ -173,8 +170,7 @@ EdgeVec_t RecursiveSplitEdge(   Edge_t & edge,
                                 bool (*pairwiseTest)(const T &, const T &)
                                 );
 void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap);
-void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used);
+void SortEdgeVec(EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap);
 EdgeVec_t SplitEdges(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
                         EdgeVec_t (*edgeSplitter)(Edge_t &, const AlignmentMap_t &));
 std::vector<bool> TestConsistencyGlobal( const AlignmentTable_t & alnTable);
@@ -597,8 +593,7 @@ breakpoint_t ConstructBreakpoint(const Region_pt & reg,size_t offset){
 //         - an edge object
 //         - an alignment map
 //Output - a call_t object (see utils.h)
-call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                        const ReadPairSet_t & used)
+call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
 {
     size_t nReads = 0;
     size_t nSplit = 0;
@@ -613,7 +608,8 @@ call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
     for(const auto & pair : edge.getSupportSummaryMap()){
         const ReadPair_pt & frag = pair.first;
         const ReadPairAlnSummary_t & summary = pair.second;
-        if(used.count(frag)) { continue; }
+        if(frag->used) { continue; }
+        //if(used.count(frag)) { continue; }
         nReads++;
         if(summary.isSplit) { nSplit++; }
         if(summary.hostLeft < hostLeft) { hostLeft = summary.hostLeft; }
@@ -999,10 +995,10 @@ size_t FillStringFromAlignment( std::string & outseq,
 //Inputs - an edge vector
 //         - a pointer to a set of used reads, may be null
 //Output - none, modifies the given edge vector
-void FilterEdgeVec(EdgeVec_t & edgeVec, const ReadPairSet_t * used){
+void FilterEdgeVec(EdgeVec_t & edgeVec){
     //size_t filtered = 0;
     for(auto it = edgeVec.begin(); it != edgeVec.end(); ){
-        if(PassesEffectiveReadCount(*it,used)){
+        if(PassesEffectiveReadCount(*it)){
             it++;
         } else {
             //Delete the element by overwriting with last element,
@@ -1487,22 +1483,21 @@ void OrderEdges(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap) {
 
     //Remove insufficiently supported Edges
     //Find the edges which are unique to a particular edge
-    ReadPairSet_t used; //Sort Edge Needs an object to work with
-    SortEdgeVec(edgeVec,alnMap,used);
+    SortEdgeVec(edgeVec,alnMap);
     fprintf(stderr,"Ordered %zu edges\n",edgeVec.size());
 }
 
 void OutputEdgeCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                std::ofstream & out, const ReadPairSet_t & used)
+                std::ofstream & out)
 {
     //Output the call
-    call_t call = ConstructCall(id, edge,alnMap, used);
+    call_t call = ConstructCall(id, edge,alnMap);
     out << call.to_string() << "\n";
 }
 
 
 void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
-                const std::string & readDir, const ReadPairSet_t & used)
+                const std::string & readDir)
 {
     //Output the reads
     std::string fName = std::to_string(id)+".bam";
@@ -1510,7 +1505,8 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
     std::vector<bam1_t*> entryVec;
     for(const auto & pair : edge.getSupportSummaryMap()){
         const ReadPair_pt & frag = pair.first;
-        if(used.count(frag)) continue;
+        if(frag->used) continue;
+        //if(used.count(frag)) continue;
         const ReadPairAlnSummary_t & summary = pair.second;
         //Order the regions such that R1 will be primarily be against the first
         // and R2 against the second
@@ -1573,8 +1569,7 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
 //         - an alignment map
 //Output - None, writes sequences to the file streams
 void OutputEdgeBP(  int id, std::ofstream & hostOut, std::ofstream & virusOut,
-                    const Edge_t & edge, const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used)
+                    const Edge_t & edge, const AlignmentMap_t & alnMap )
 {
     //Build the Table of aligned sequences
     AlignmentTable_t alnTable = BuildAlignmentTable(edge,alnMap);
@@ -1612,12 +1607,11 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
                     const std::string & virusbpFName)
 {
     fprintf(stderr,"Outputting Edges ensuring reads support only one edge...\n");
-    ReadPairSet_t used;
     std::ofstream out(resFName);
     std::ofstream hbpOut(hostbpFName);
     std::ofstream vbpOut(virusbpFName);
     //Initialize the Edge Queue
-    CBranchedEdgeQueue edgeQueue(&alnMap,&used);
+    CBranchedEdgeQueue edgeQueue(&alnMap);
     ConstructEdgeQueue(edgeVec,edgeQueue);
     //Pull Elements off the edge queue
     fprintf(stderr,"Processing Edge Queue...\n");
@@ -1626,13 +1620,14 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
     int pert = 0;
     while(!edgeQueue.empty()){
         const Edge_t & edge = edgeQueue.top();
-        if(PassesEffectiveReadCount(edge,&used)){
+        if(PassesEffectiveReadCount(edge)){
             //Output to the res file, bam files, and fasta files
-            OutputEdgeCall(nextJunctionID,edge,alnMap,out,used);
-            OutputEdgeReads(nextJunctionID,edge,alnMap,readDir,used);
-            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap,used);
+            OutputEdgeCall(nextJunctionID,edge,alnMap,out);
+            OutputEdgeReads(nextJunctionID,edge,alnMap,readDir);
+            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap);
             //Update the used Set
-            used.insert(edge.getSupport().begin(),edge.getSupport().end());
+            edge.markSupportUsed();
+            //used.insert(edge.getSupport().begin(),edge.getSupport().end());
             nextJunctionID++;
             edgeQueue.pop();
         } else {
@@ -1652,21 +1647,21 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
 //Given an edge reports wheteher it has enough effective reads
 //Inputs - an Edge
 //Output - boolean wether it has enough reads
-bool PassesEffectiveReadCount(  const Edge_t & edge,
-                                const ReadPairSet_t * used)
+bool PassesEffectiveReadCount(  const Edge_t & edge )
 {
     //size_t count = edge.supportSet.size() + ((edge.nSplit) ? SplitBonus : 0);
     double count = 0;
     bool bSplit = false;
-    //null or empty used means we can take the edge at its word
-    if(!used || used->empty()){
-        count = edge.getSupport().size();
-        if(edge.isSplit()) { count += SplitBonus; }
-        return (count >= MinimumReads);
-    }
+    ////null or empty used means we can take the edge at its word
+    //if(!used || used->empty()){
+    //    count = edge.getSupport().size();
+    //    if(edge.isSplit()) { count += SplitBonus; }
+    //    return (count >= MinimumReads);
+    //}
     //Used Exists and is non-empty, we have to check the fragments
     for(const auto & pair : edge.getSupportSummaryMap()){
-        if(used->count(pair.first)) { continue; }
+        if(pair.first->used) { continue; }
+        //if(used->count(pair.first)) { continue; }
         count += 1.0;
         if(pair.second.isSplit) {bSplit = true; }
     }
@@ -1874,13 +1869,12 @@ void RemoveUnalignedReads(EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap){
 }
 
 
-void SortEdgeVec(   EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used) {
+void SortEdgeVec( EdgeVec_t & edgeVec, const AlignmentMap_t & alnMap ) {
     std::sort(  edgeVec.begin(), edgeVec.end(),
-                [&alnMap,&used](Edge_t & a, Edge_t & b){
+                [&alnMap](Edge_t & a, Edge_t & b){
                     //Sort in descending order (we'll process from the back)
-                    double aScore = a.score(alnMap,used);
-                    double bScore = b.score(alnMap,used);
+                    double aScore = a.score(alnMap);
+                    double bScore = b.score(alnMap);
                     if(aScore != bScore){
                         return aScore < bScore;
                     }
@@ -2045,7 +2039,4 @@ bool TestConsistencyPairwise( const BreakpointPair_t & a,
     }
     return true;
 }
-
-
-
 

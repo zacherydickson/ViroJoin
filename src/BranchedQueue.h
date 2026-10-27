@@ -59,15 +59,14 @@ public:
 protected:
     void addNode(BranchedQueueNode_pt<EdgeType, ElementType, ElementSetType, ContextType> node,
                  const ContextType& context,
-                 const ElementSetType& used,
                  bool bNewElement);
     
     void addElements(ElementSetType elements, const ContextType & context);
     size_t queueSize();
     void removeElements(const ElementSetType& elements, bool bRecurse = false);
     
-    double score(const ContextType& context, const ElementSetType& used) {
-        return this->edge.cachedScore(context, used);
+    double score(const ContextType& context) {
+        return this->edge.cachedScore(context);
     }
 };
 
@@ -80,7 +79,6 @@ public:
 
 public:
     const ContextType* pContext;
-    const ElementSetType* pUsedElements;
 
 protected:
     BranchedQueueNodeList_t<EdgeType, ElementType, ElementSetType, ContextType> data;
@@ -89,8 +87,8 @@ protected:
     bool validNElementCache;
 
 public:
-    CBranchedQueue(const ContextType* pCtx, const ElementSetType* pSet)
-        : pContext(pCtx), pUsedElements(pSet), data(), nEdges(0), nElements(0), validNElementCache(false) {}
+    CBranchedQueue(const ContextType* pCtx)
+        : pContext(pCtx), data(), nEdges(0), nElements(0), validNElementCache(false) {}
     
     ~CBranchedQueue() = default;
 
@@ -132,7 +130,6 @@ protected:
             this->validNElementCache = false;
         }
         const ContextType& context = *(this->pContext);
-        const ElementSetType& usedElements = *(this->pUsedElements);
 
         if (this->data.empty()) {
             data.push_front(std::move(node));
@@ -149,7 +146,7 @@ protected:
              it++, pit++) 
         {
             const auto& curNode = *it;
-            if (curNode->score(context, usedElements) > node->score(context, usedElements)) {
+            if (curNode->score(context) > node->score(context)) {
                 insIt = it;
             }
 
@@ -171,17 +168,17 @@ protected:
         }
 
         auto& mergeNode = *mergeIt;
-        if (mergeNode->score(context, usedElements) >= node->score(context, usedElements)) {
+        if (mergeNode->score(context) >= node->score(context)) {
             mergeNode->descendentElements.insert(node->descendentElements.begin(), node->descendentElements.end());
             node->removeElements(mergeNode->edge.getSupport(), false);
-            mergeNode->addNode(std::move(node), context, usedElements, bNewElement);
+            mergeNode->addNode(std::move(node), context, bNewElement);
             return;
         }
 
         node->descendentElements.insert(mergeNode->descendentElements.begin(), mergeNode->descendentElements.end());
         mergeNode->removeElements(node->edge.getSupport(), true);
         
-        node->addNode(std::move(mergeNode), context, usedElements, bNewElement);
+        node->addNode(std::move(mergeNode), context, bNewElement);
         this->data.erase_after(preMergeIt);
         this->data.insert_after(insIt, std::move(node));
     }
@@ -218,19 +215,18 @@ template <typename EdgeType, typename ElementType, typename ElementSetType, type
 void BranchedQueueNode_t<EdgeType, ElementType, ElementSetType, ContextType>::addNode(
     BranchedQueueNode_pt<EdgeType, ElementType, ElementSetType, ContextType> node,
     const ContextType& context,
-    const ElementSetType& used,
     bool bNewElement) 
 {
     if (!node->edge.getSupport().size()) {
         if (node->childQueue) {
             for (auto& cNode : node->childQueue->data) {
-                this->addNode(std::move(cNode), context, used, false);
+                this->addNode(std::move(cNode), context, false);
             }
         }
         return;
     }
     if (!this->childQueue) {
-        this->childQueue = std::make_unique<CBranchedQueue<EdgeType, ElementType, ElementSetType, ContextType>>(&context, &used);
+        this->childQueue = std::make_unique<CBranchedQueue<EdgeType, ElementType, ElementSetType, ContextType>>(&context);
     }
     this->childQueue->addNode(std::move(node), bNewElement);
 }

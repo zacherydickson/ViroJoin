@@ -169,9 +169,10 @@ struct Read_pt_HashFunctor {
 //};
 
 struct ReadPair_t {
-    ReadPair_t() : R1(nullptr), R2(nullptr) {}
+    ReadPair_t() : R1(nullptr), R2(nullptr), used(false){}
     Read_pt R1;
     Read_pt R2;
+    bool used;
     Read_pt & operator[](bool bR1){ return (bR1) ? R1 : R2; }
     Read_pt & getRead(bool bR1){ return (bR1) ? R1 : R2; }
 };
@@ -505,6 +506,11 @@ struct Edge_t {
     bool transferSupport(const ReadPair_pt & frag, Edge_t & other) {
         return this->distributeSupport(frag,other,true);
     }
+    void markSupportUsed() const {
+        for (const ReadPair_pt & frag : this->supportSet) {
+            frag->used = true;
+        }
+    }
     protected:
     bool distributeSupport(const ReadPair_pt & frag, Edge_t & other,bool bRemove = true){
         //Cannot transfer support an edge does not have
@@ -663,11 +669,10 @@ struct Edge_t {
     size_t splitCount() const { return this->nSplit; }
     bool isSplit() const { return this->nSplit > 0; }
     //Retained for backwards compatibility
-    double cachedScore(   const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used)
+    double cachedScore( const AlignmentMap_t & alnMap )
     {
         if(this->m_cachedScore == -1) {
-            this->m_cachedScore = this->score(alnMap,used);
+            this->m_cachedScore = this->score(alnMap);
         }
         return this->m_cachedScore;
     }
@@ -685,14 +690,14 @@ struct Edge_t {
         return true;
     }
     //alnMap Retained for backwards compatibility
-    double score(   const AlignmentMap_t & alnMap,
-                    const ReadPairSet_t & used) const
+    double score( const AlignmentMap_t & alnMap ) const
     {
-        if(used.empty()) { return lastScore; }
+        //if(used.empty()) { return lastScore; }
         double my_score = 0;
         for(const auto & pair: this->supportAlnSummaryMap ) {
             const ReadPair_pt & frag = pair.first;
-            if(used.count(frag)) { continue; }
+            //if(used.count(frag)) { continue; }
+            if(frag->used) { continue; }
             my_score += pair.second.score();
         }
         return my_score;
