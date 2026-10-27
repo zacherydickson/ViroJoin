@@ -172,7 +172,13 @@ struct ReadPair_t {
     ReadPair_t() : R1(nullptr), R2(nullptr), used(false){}
     Read_pt R1;
     Read_pt R2;
+    protected:
     bool used;
+    public:
+    bool isUsed() const { return this->used;}
+    void setUsed(bool used) { this->used = used; }
+    void markUsed() {this->used = true; }
+    void markUnused() {this->used = false; }
     Read_pt & operator[](bool bR1){ return (bR1) ? R1 : R2; }
     Read_pt & getRead(bool bR1){ return (bR1) ? R1 : R2; }
 };
@@ -508,7 +514,7 @@ struct Edge_t {
     }
     void markSupportUsed() const {
         for (const ReadPair_pt & frag : this->supportSet) {
-            frag->used = true;
+            frag->markUsed();
         }
     }
     protected:
@@ -697,7 +703,7 @@ struct Edge_t {
         for(const auto & pair: this->supportAlnSummaryMap ) {
             const ReadPair_pt & frag = pair.first;
             //if(used.count(frag)) { continue; }
-            if(frag->used) { continue; }
+            if(frag->isUsed()) { continue; }
             my_score += pair.second.score();
         }
         return my_score;

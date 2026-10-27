@@ -608,8 +608,7 @@ call_t ConstructCall(int id, const Edge_t & edge, const AlignmentMap_t & alnMap)
     for(const auto & pair : edge.getSupportSummaryMap()){
         const ReadPair_pt & frag = pair.first;
         const ReadPairAlnSummary_t & summary = pair.second;
-        if(frag->used) { continue; }
-        //if(used.count(frag)) { continue; }
+        if(frag->isUsed()) { continue; }
         nReads++;
         if(summary.isSplit) { nSplit++; }
         if(summary.hostLeft < hostLeft) { hostLeft = summary.hostLeft; }
@@ -1505,7 +1504,7 @@ void OutputEdgeReads(int id, const Edge_t & edge, const AlignmentMap_t & alnMap,
     std::vector<bam1_t*> entryVec;
     for(const auto & pair : edge.getSupportSummaryMap()){
         const ReadPair_pt & frag = pair.first;
-        if(frag->used) continue;
+        if(frag->isUsed()) continue;
         //if(used.count(frag)) continue;
         const ReadPairAlnSummary_t & summary = pair.second;
         //Order the regions such that R1 will be primarily be against the first
@@ -1660,7 +1659,7 @@ bool PassesEffectiveReadCount(  const Edge_t & edge )
     //}
     //Used Exists and is non-empty, we have to check the fragments
     for(const auto & pair : edge.getSupportSummaryMap()){
-        if(pair.first->used) { continue; }
+        if(pair.first->isUsed()) { continue; }
         //if(used->count(pair.first)) { continue; }
         count += 1.0;
         if(pair.second.isSplit) {bSplit = true; }
