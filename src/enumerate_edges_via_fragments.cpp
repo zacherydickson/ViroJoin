@@ -389,6 +389,7 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
     for(const BPGraphVec_t * vec_ptr :
             {&graphVecPair.first,&graphVecPair.second} )
     {
+        std::cerr << "Begin on vec\n";
         std::string chr = vec_ptr->front().get_chromosome();
         bool opensLeft = vec_ptr->front().opens_left();
         bool isHost = (vec_ptr == &graphVecPair.first);
@@ -419,14 +420,18 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
                     if(right > regProp.right) { regProp.right = right; }
                 }
             }
+            std::cerr << "Post determine regions\n";
             //Add the regions to the region graph
             for(const auto & pair : regionPropMap) {
                 regGraph.addOrUpdateVertex( pair.second);
             }
         }
+        std::cerr << "End on vec\n";
     }
+    std::cerr << "Pre construction\n";
     ////Explicitly request construction of edges
     regGraph.ensureConstructed();
+    std::cerr << "Post construction\n";
     //fprintf(stderr, "Region graph with %d regions and %d edges created\n",regGraph.vcount(),regGraph.ecount());
     return regGraph;
 }
