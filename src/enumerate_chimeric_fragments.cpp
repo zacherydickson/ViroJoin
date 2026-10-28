@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <list>
 #include <memory>
@@ -222,7 +223,6 @@ int main(int argc, char* argv[]) {
     std::string bed_fname = workdir + "/junction-candidates.bedpe";
     std::ofstream outbed(bed_fname);
 
-    //TODO: Multithreading
     //Set up the thread pool
     int nThread = parse_config_threads(workdir + "/config.txt");
     ctpl::thread_pool thread_pool(nThread);
@@ -232,6 +232,7 @@ int main(int argc, char* argv[]) {
     LoadVirusNames(virus_names_file,VirusNameSet);
     MaxInsertSize = parse_stats(stats_file_name).max_is;
 
+    fprintf(stderr,"Loading Reads and launching...\n");
     bam1_t* read_buf = nullptr;
     open_samFile_t* alnFile = open_samFile(bam_fname.c_str(), false, false);
     std::vector<std::future<void>> futureVec;
@@ -245,9 +246,14 @@ int main(int argc, char* argv[]) {
         futureVec.push_back(std::move(future));
         //TODO: Maybe make it sort its output on its own?
     }
+    fprintf(stderr,"Processing Alignments for %lu Read Pairs ...\n",futureVec.size());
+    size_t nComplete = 0;
     for(auto & future : futureVec){
         future.get();
+        double progress = double(++nComplete) / double(futureVec.size()) * 100.0;
+        fprintf(stderr,"Progress: %0.2f%%\r",progress);
     }
+    fprintf(stderr,"\nDone\n");
     close_samFile(alnFile);
     bam_destroy1(read_buf);
 }
@@ -491,6 +497,16 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
     }
 }
 
+template<typename FragmentContainerType>
+void OutputFragmentContainer (const FragmentContainerType & fragContainer, std::ofstream & outbed) {
+    for( const ChimericFragment_t & frag : fragContainer ){
+        std::string bedpeStr = frag.to_bedpe();
+        mu.lock();
+        outbed << bedpeStr << "\n";
+        mu.unlock();
+    }
+}
+
 //Given a vector of alignments, stitches combinations of alignments into
 // consistent fragments and outputs them to the provided ofstream
 //Each alignment may have alternative alignments, any of which is considered
@@ -543,14 +559,34 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
         }
     }
     if(bValid){
+        //Sort fragments so that comparable blocks are contiguous
+        std::sort(fragmentVec.begin(),fragmentVec.end(),
+                [](const ChimericFragment_t & a, const ChimericFragment_t & b) {
+                    return (a.compare(b) == -1);
+                } );
         //Collect Complete fragments, and remove fragments which are
         //dominated by another (same fragment with better coverage/ support)
         //Process fragments until there are no more, and retain the dominant fragments
         std::list<ChimericFragment_t> domFragList;
-        for(; fragmentVec.size() > 0; fragmentVec.pop_back()){
+        std::string lastKey="";
+        for(; fragmentVec.size() > 0; fragmentVec.pop_back()) {
             const ChimericFragment_t & frag = fragmentVec.back();
             //Skip incomplete fragments
             if(!frag.is_complete()) { continue; }
+            //Construct a key for the dominance block
+            std::string key = frag.getChr(ChimericFragment_t::IV1) + ":" +
+                              std::to_string(frag.distal_pos(ChimericFragment_t::IV1)) + ":" +
+                              std::to_string(frag.opens_left(ChimericFragment_t::IV1)) + ";" +
+                              frag.getChr(ChimericFragment_t::IV2) +  ":" +
+                              std::to_string(frag.distal_pos(ChimericFragment_t::IV2)) + ":" +
+                              std::to_string(frag.opens_left(ChimericFragment_t::IV2)) + ";";
+            //Check if we have moved into a new block; no other fragment can have
+            // any dominance relationship with any in the current domFragList
+            if( key != lastKey) {
+                OutputFragmentContainer(domFragList,outbed);
+                domFragList.clear();
+                lastKey = key;
+            }
             bool bDominated = false;
             //Check if this complete fragment is dominated by any previous
             for(auto it = domFragList.begin();
@@ -570,12 +606,8 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
             if(bDominated) { continue; }
             domFragList.push_back(frag);
         }
-        for( const ChimericFragment_t & frag : domFragList ){
-            std::string bedpeStr = frag.to_bedpe();
-            mu.lock();
-            outbed << bedpeStr << "\n";
-            mu.unlock();
-        }
+        //Output the final domination block
+        OutputFragmentContainer(domFragList,outbed);
     }
     DestroyAlnVector(alnVecPtr);
 }
