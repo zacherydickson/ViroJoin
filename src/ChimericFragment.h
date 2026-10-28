@@ -111,6 +111,7 @@ class ChimericFragment_t {
                         bool isLeft, bool isR1, uint8_t clipSide,
                         ChimericFragment_t::IV_IDX ivIdx);
     int dominant_comparison (const ChimericFragment_t & other) const;
+    int compare (const ChimericFragment_t & other) const;
     std::string to_bedpe(bool bitflag = false) const ;
     //Static Methods
     static ChimericFragment_t from_bedpe(const std::string bedpe);
@@ -227,6 +228,34 @@ bool ChimericFragment_t::add_alignment( const CXA & aln, bool isClip, bool isAnc
     return bChange;
 }
 
+//A Comparator for Chimeric Fragment Objects which, if used to sort the objects
+// will result in the objects appearing in contiguous blocks between which,
+// dominant_comparisons are incomparable (allowing one to skip many comparisons)
+//Output - -1 if this object is less than the other object
+//       - 0 if the two objects are equal
+//       - 1 if the other object is greater
+int ChimericFragment_t::compare (const ChimericFragment_t & other) const {
+    for(IV_IDX ivIdx : {IV1, IV2}){
+        //Lexicographic sort on chromosomes
+        if(this->chr[ivIdx] != other.chr[ivIdx]){
+            return (this->chr[ivIdx] < other.chr[ivIdx]) ? -1 : 1;
+        }
+        //Position sort on distal pos
+        if(this->distal_pos(ivIdx) != other.distal_pos(ivIdx)) {
+            return (this->distal_pos(ivIdx) < other.distal_pos(ivIdx)) ? -1 : 1;
+        }
+        //opens left before opens_right
+        if( (this->flag[ivIdx] & OPENS_LEFT) !=
+            (other.flag[ivIdx] & OPENS_LEFT) )
+        {
+            return (this->flag[ivIdx] & OPENS_LEFT) ?  -1 : 1;
+        }
+    }
+    if( this->n_split() != other.n_split() ) {
+        return (this->n_split() < other.n_split()) ? -1 : 1;
+    }
+    return 0;
+}
 
 //Determine if a fragment is strictly better than another
 //  If two fragments have the same configuration, and the same distal positions,
