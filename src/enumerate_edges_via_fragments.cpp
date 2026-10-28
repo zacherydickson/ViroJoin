@@ -564,6 +564,7 @@ RegGraphVec_t FragmentMapToRegionGraphVec(size_t nThread,
     ctpl::thread_pool threadPool(nThread);
     RegGraphVec_t regGraphVec;
     std::vector<std::future<CRegionGraph>> futureVec;
+    //TODO: Launch the processing in order from smallest to largest (merely for logging purposes)
     for(const auto & pair : fvMap){
         std::future<CRegionGraph> future = threadPool.push(
                 [&threadPool,&pair](int id) {
