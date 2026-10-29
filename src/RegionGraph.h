@@ -5,13 +5,14 @@
 #include "igraph/igraph.h"
 #include <iostream>
 #include <map>
+#include <unordered_map>
 #include <numeric>
 #include <stdexcept>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include "str_utils.h"
 #include <vector>
-
 
 //Note: Current implementation stores all graph and vertex attributes twice
 //  in the object, and in the underyling graph
@@ -113,10 +114,10 @@ protected:
     igraph_t graph;
     uint8_t flag;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
-    std::multimap<std::string, igraph_integer_t> vertex_by_fragment;
+    std::unordered_multimap<std::string, igraph_integer_t> vertex_by_fragment;
     std::vector<EdgeProps> queuedEdges;
-    //std::vector<VertexProps> vertices;
-    
+    std::vector<VertexProps> vertices;
+
 //Con-/Destruction
 public:
     CRegionGraph(size_t nVertices = 0);
@@ -132,7 +133,9 @@ public:
     igraph_t* get_igraph() { assertOwnership(); return &graph; }
     std::pair<igraph_int_t,igraph_int_t> get_edge_endpoints(igraph_int_t eid) const;
     EdgeProps get_edge_properties(int id) const;
-    VertexProps get_vertex_properties(int id) const;
+    const VertexProps & get_vertex_properties(int id) const;
+    bool hasValidLookup() const {return (flag & VALID_LOOKUP) ? true : false; };
+
     int vcount() const { return igraph_vcount(&graph); }
     int ecount() const { return igraph_ecount(&graph); }
 //Methods:
@@ -149,6 +152,7 @@ public:
 private:
     void assertOwnership();
     void checkAndQueueEdge(igraph_integer_t v1_id, igraph_integer_t v2_id);
+    VertexProps construct_vertex_properties(int id) const;
     void ensureValidLookup();
     void init_attribute_table();
     static std::vector<std::string> intersectFragmentGroups(
@@ -181,7 +185,8 @@ CRegionGraph::~CRegionGraph () {
 CRegionGraph::CRegionGraph(CRegionGraph&& other) :
     graph(std::move(other.graph)),
     flag(other.flag),
-    vertex_by_fragment(std::move(other.vertex_by_fragment))
+    vertex_by_fragment(std::move(other.vertex_by_fragment)),
+    vertices(std::move(other.vertices))
 {
     other.flag &= ~OWNS_GRAPH;
 }
@@ -193,6 +198,7 @@ CRegionGraph& CRegionGraph::operator=(CRegionGraph&& other) {
     graph = std::move(other.graph);
     flag = other.flag;
     vertex_by_fragment = std::move(other.vertex_by_fragment);
+    vertices = std::move(other.vertices);
     other.flag &= ~OWNS_GRAPH;
     return *this;
 }
@@ -221,17 +227,27 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
     igraph_add_vertices(&graph, 1, nullptr);
 
     //Get the set of old verticies which also have these fragments
-    std::set<igraph_int_t> vertexWithFragmentSet;
-    for(auto & fragGrp : assocFragGroups) {
-        for(std::string frag : strsplit(fragGrp,DupDelim)) {
+    std::vector<std::string> uniqFrags;
+    uniqFrags.reserve(assocFragGroups.size()*2);
+    for(const std::string & fragGrp : assocFragGroups) {
+        for(const std::string & frag : strsplit(fragGrp,DupDelim)) {
+            uniqFrags.push_back(frag);
+        }
+    }
+    std::sort(uniqFrags.begin(),uniqFrags.end());
+    uniqFrags.erase(std::unique(uniqFrags.begin(),uniqFrags.end()),uniqFrags.end());
+    std::unordered_set<igraph_int_t> vertexWithFragmentSet;
+    //for(const std::string & fragGrp : assocFragGroups) {
+    //    for(const std::string & frag : strsplit(fragGrp,DupDelim)) {
+        for(const std::string & frag : uniqFrags) {
             auto range = vertex_by_fragment.equal_range(frag);
             for(auto i = range.first; i != range.second; i++){
                 vertexWithFragmentSet.insert(i->second);
             }
             //Update the lookup with the new verticies
-            vertex_by_fragment.insert({frag,new_vid});
+            vertex_by_fragment.emplace(frag,new_vid);
         }
-    }
+    //}
 
     std::string assocFragStr = strjoin( assocFragGroups.begin(),
                                         assocFragGroups.end(), FragDelim);
@@ -244,6 +260,8 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
     SETVAN(&graph, "Left", new_vid, left);
     SETVAN(&graph, "Right", new_vid, right);
     SETVAS(&graph, "assocFragGrps", new_vid, assocFragStr.c_str());
+    //Retain vertex properties for quick lookup
+    this->vertices.push_back(construct_vertex_properties(new_vid));
 
     // Check against relevant pre-existing vertices to evaluate edge creations
     for (igraph_int_t old_vid : vertexWithFragmentSet){
@@ -265,8 +283,9 @@ void CRegionGraph::checkAndQueueEdge(  igraph_integer_t v1_id,
 {
     //No self edges
     if(v1_id == v2_id) { return; }
-    VertexProps v1 = this->get_vertex_properties(v1_id);
-    VertexProps v2 = this->get_vertex_properties(v2_id);
+
+    const VertexProps & v1 = this->get_vertex_properties(v1_id);
+    const VertexProps & v2 = this->get_vertex_properties(v2_id);
 
     //Skip edges within parts of the graph
     if(v1.isHost == v2.isHost) { return; }
@@ -323,12 +342,15 @@ void CRegionGraph::ensureConstructed() {
 void CRegionGraph::ensureValidLookup() {
     if(flag & VALID_LOOKUP) { return; }
     vertex_by_fragment.clear();
+    vertices.clear();
+    vertices.resize(this->vcount());
     for(int i = 0; i < this->vcount(); i++){
         for(std::string fragGrp : strsplit(VAS(&graph,"assocFragGrps",i),FragDelim)){
             for( std::string fragName : strsplit(fragGrp,DupDelim)){
-                vertex_by_fragment.insert({fragName,i});
+                vertex_by_fragment.emplace(fragName,i);
             }
         }
+        vertices[i] = this->construct_vertex_properties(i);
     }
     flag |= VALID_LOOKUP;
 }
@@ -353,6 +375,7 @@ void CRegionGraph::filterEdges( double minWeight, double splitBonus) {
         }
         igraph_delete_edges(&graph, igraph_ess_vector(&vec));
         igraph_vector_int_destroy(&vec);
+        ensureValidLookup();
     }
 }
 
@@ -454,7 +477,12 @@ CRegionGraph::EdgeProps CRegionGraph::get_edge_properties(int id) const {
     };
 }
 
-CRegionGraph::VertexProps CRegionGraph::get_vertex_properties(int id) const {
+const CRegionGraph::VertexProps & CRegionGraph::get_vertex_properties(int id) const {
+    if(! (flag & VALID_LOOKUP)) { throw std::logic_error("Attempt to call get_vertex_properties on Region Graph without a valid lookup"); }
+    return this->vertices[id];
+}
+
+CRegionGraph::VertexProps CRegionGraph::construct_vertex_properties(int id) const {
     return {    id,
                 VAS(&graph,"Chromosome",id),
                 VAB(&graph,"OpensLeft",id),
@@ -471,6 +499,7 @@ CRegionGraph::VertexProps CRegionGraph::get_vertex_properties(int id) const {
 void CRegionGraph::mergeUninformitiveOverlap() {
     assertOwnership();
     ensureConstructed();
+    ensureValidLookup();
     std::vector<VertexProps> sortedVertexProps;
     for(igraph_int_t i = 0; i < this->vcount(); i++){
         sortedVertexProps.push_back(this->get_vertex_properties(i));

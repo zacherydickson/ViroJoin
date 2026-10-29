@@ -14,6 +14,7 @@
 #include "utils.h"
 #include "htslib/sam.h"
 
+
 //==== TYPE DECLARATIONS
 
 struct ReadRegionAssoc_t {
@@ -298,11 +299,23 @@ BPGraphVecPairMap_t ConstructBPGraphVecPairMap(
 {
     fprintf(stderr, "Constructing Breakpoint Graph Pairs ...\n");
     BPGraphVecPairMap_t gvPairMap;
+    std::vector<StrandLabelPair_t> labelVec;
     for (const auto & label_fv_pair : fvMap) {
-        BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(label_fv_pair.second);
+        labelVec.push_back(label_fv_pair.first);
+    }
+    //Sort largest fragmentVec to largest
+    std::sort(labelVec.begin(),labelVec.end(),
+            [&fvMap](const StrandLabelPair_t & a, const StrandLabelPair_t & b) {
+                return fvMap.at(a).size() > fvMap.at(b).size();
+            } );
+    //for (const auto & label_fv_pair : fvMap) {
+    for (const auto & label : labelVec) {
+        //BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(label_fv_pair.second);
+        BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(fvMap.at(label));
         //Skip low support pairs
         if(gvPair.first.empty()) { continue; }
-        gvPairMap.insert({label_fv_pair.first,std::move(gvPair)});
+        gvPairMap.insert({label,std::move(gvPair)});
+        //gvPairMap.insert({label_fv_pair.first,std::move(gvPair)});
     }
     fprintf(stderr, "Constructed %lu Breakpoint Graph Pairs\n",gvPairMap.size());
     return gvPairMap;
@@ -381,6 +394,7 @@ ReadRegionAssocVec_t ConstructReadRegionAssociations(
     return rrAssocVec;
 }
 
+
 //Takes the cliques generated in the graph map and builds regions from them
 //Which are then placed into a bipartite graph of host and viral regions
 CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
@@ -389,7 +403,6 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
     for(const BPGraphVec_t * vec_ptr :
             {&graphVecPair.first,&graphVecPair.second} )
     {
-        std::cerr << "Begin on vec\n";
         std::string chr = vec_ptr->front().get_chromosome();
         bool opensLeft = vec_ptr->front().opens_left();
         bool isHost = (vec_ptr == &graphVecPair.first);
@@ -406,32 +419,30 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
                 size_t right = std::max(fragGrpProp.proximalPos,fragGrpProp.distalPos);
                 //Iterate over cliques for this id
                 for( int cID : fragGrpProp.cliques) {
-                    if(!regionPropMap.count(cID)){
+                    auto it = regionPropMap.find(cID);
+                    if(it == regionPropMap.end()){
                         CRegionGraph::VertexProps regProp = {   cID, chr, opensLeft,
                                                                 false, isHost, 
                                                                 size_t(~0),
                                                                 0, {}};
-                        regionPropMap.emplace(cID,regProp);
+                        auto res_pair = regionPropMap.emplace(cID,std::move(regProp));
+                        it = res_pair.first;
                     }
-                    CRegionGraph::VertexProps & regProp = regionPropMap.at(cID);
+                    CRegionGraph::VertexProps & regProp = it->second;
                     regProp.fromSplit |= fragGrpProp.isSplit;
                     regProp.assocFragGroups.push_back(fragGrpStr);
                     if(left < regProp.left) { regProp.left = left; }
                     if(right > regProp.right) { regProp.right = right; }
                 }
             }
-            std::cerr << "Post determine regions\n";
             //Add the regions to the region graph
             for(const auto & pair : regionPropMap) {
                 regGraph.addOrUpdateVertex( pair.second);
             }
         }
-        std::cerr << "End on vec\n";
     }
-    std::cerr << "Pre construction\n";
     ////Explicitly request construction of edges
     regGraph.ensureConstructed();
-    std::cerr << "Post construction\n";
     //fprintf(stderr, "Region graph with %d regions and %d edges created\n",regGraph.vcount(),regGraph.ecount());
     return regGraph;
 }
@@ -569,7 +580,6 @@ RegGraphVec_t FragmentMapToRegionGraphVec(size_t nThread,
     ctpl::thread_pool threadPool(nThread);
     RegGraphVec_t regGraphVec;
     std::vector<std::future<CRegionGraph>> futureVec;
-    //TODO: Launch the processing in order from smallest to largest (merely for logging purposes)
     for(const auto & pair : fvMap){
         std::future<CRegionGraph> future = threadPool.push(
                 [&threadPool,&pair](int id) {
