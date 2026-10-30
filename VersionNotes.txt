@@ -88,3 +88,5 @@ Version 2.3.1
 	Updated Duplicate Handling to reduce cases where a duplicate might be used to support a separate edge despite a marked duplicate being used
 Version 2.3.2
 	Adding logging statements to and sped up enumerate_chimeric_fragments
+Version 2.3.3
+        Major Speedup of enumerate_edges through lookup cacheing and data-structure changes
