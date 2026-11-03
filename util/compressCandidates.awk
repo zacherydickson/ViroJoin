@@ -32,11 +32,12 @@ BEGIN {
 #        exit (ExitCode = 1);
 #    }
     OFS="\t"
+    if(!outDir) {outDir = "."}
     NextFragmentID=0;
     NextGroupID=0;
-    fragmentIndexFile="fragment-index.tsv"
+    fragmentIndexFile=outDir"/fragment-index.tsv"
     print "Name\tIndex" > fragmentIndexFile
-    fragmentGroupFile="fragment-group.tsv"
+    fragmentGroupFile=outDir"/fragment-group.tsv"
     print "GroupIndex\tNFragments\tFragmentIndex1\t..." >  fragmentGroupFile
 }
 

@@ -99,3 +99,5 @@ Version 2.3.4
         minor implementation changes
 Version 2.4.0
 	Added command line options --minFrag and --splitBonus to control the amount of support required to call a junction
+Version 2.4.1
+	Fixed bug where auxiliary files for compressed junction candidates were not placed in the working directory
