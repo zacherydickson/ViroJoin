@@ -281,6 +281,10 @@ if cmd_args.fq1 == cmd_args.fq2:
     eprint("[ERROR] fq1 and fq2 inputs must not be the same file")
     sys.exit(1)
 
+if (cmd_args.minFrag - cmd_args.splitBonus) <= 1:
+    eprint("[ERROR] minFrag less splitBonus must greater than 1")
+    sys.exit(1)
+
 #Remove workdir if requested
 if cmd_args.clean_first:
     shutil.rmtree(cmd_args.workdir,ignore_errors=True)
