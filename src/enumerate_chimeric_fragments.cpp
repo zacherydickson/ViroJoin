@@ -181,7 +181,7 @@ void DestroyAlnVector(AlnVector_pt & alnVec);
 void FilterIncompleteFragmentInfo(MateAlnInfoList_t & alnInfoList);
 int ParseAlnID(bam1_t* aln, std::string & qname, uint8_t & flag);
 void ParseReadXA(bam1_t *read, std::string primaryContig,std::vector<CXA> & out);
-void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr);
+void ProcessAlnVec(int id, bam_hdr_t* header, AlnVector_pt alnVecPtr);
 AlnVector_pt ReadAlnSet(open_samFile_t* alnFile, bam1_t* & read_buf);
 
 // ===== MAIN
@@ -220,9 +220,7 @@ int main(int argc, char* argv[]) {
     std::string bam_fname = workspace + "/all_alignments.ns.bam";
     std::string stats_file_name = workspace + "/stats.txt";
 
-    //##Output file
-    std::string bed_fname = workdir + "/junction-candidates.bedpe";
-    std::ofstream outbed(bed_fname);
+    //##Output to stdout
 
     //Set up the thread pool
     config_t config = parse_config(workdir + "/config.txt");
@@ -242,8 +240,8 @@ int main(int argc, char* argv[]) {
     auto header = alnFile->header;
     for(AlnVector_pt alnVecPtr; (alnVecPtr = ReadAlnSet(alnFile,read_buf)) != nullptr; ){
         std::future<void> future = thread_pool.push(
-                [ptr = std::move(alnVecPtr), file=&outbed, h=&header ](int id) mutable {
-                    ProcessAlnVec(id, *file,*h,std::move(ptr));
+                [ptr = std::move(alnVecPtr), h=&header ](int id) mutable {
+                    ProcessAlnVec(id,*h,std::move(ptr));
                 }
         );
         futureVec.push_back(std::move(future));
@@ -501,11 +499,11 @@ void ParseReadXA (  bam1_t *read, std::string primaryContig,
 }
 
 template<typename FragmentContainerType>
-void OutputFragmentContainer (const FragmentContainerType & fragContainer, std::ofstream & outbed) {
+void OutputFragmentContainer (const FragmentContainerType & fragContainer) {
     for( const ChimericFragment_t & frag : fragContainer ){
         std::string bedpeStr = frag.to_bedpe();
         mu.lock();
-        outbed << bedpeStr << "\n";
+        std::cout << bedpeStr << "\n";
         mu.unlock();
     }
 }
@@ -523,8 +521,8 @@ void OutputFragmentContainer (const FragmentContainerType & fragContainer, std::
 //Responsible for destroying alignments in tha alnVector
 //Inputs - an open output file stream ofstream object
 //       - an AlnVector_pt object to process
-//Output - None, writes to outbed
-void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
+//Output - None, writes to stdout
+void ProcessAlnVec(int id, bam_hdr_t* header, AlnVector_pt alnVecPtr) {
     FragmentInfo_t fragInfo = ConstructFragmentInfo(header, *alnVecPtr);
     std::string qName("");
     uint8_t dummy;
@@ -588,7 +586,7 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
             //Check if we have moved into a new block; no other fragment can have
             // any dominance relationship with any in the current domFragList
             if( key != lastKey) {
-                OutputFragmentContainer(domFragList,outbed);
+                OutputFragmentContainer(domFragList);
                 domFragList.clear();
                 lastKey = key;
             }
@@ -612,7 +610,7 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
             domFragList.push_back(frag);
         }
         //Output the final domination block
-        OutputFragmentContainer(domFragList,outbed);
+        OutputFragmentContainer(domFragList);
     }
     DestroyAlnVector(alnVecPtr);
 }
