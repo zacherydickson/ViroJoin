@@ -75,8 +75,8 @@ StripedSmithWaterman::Aligner Aligner(  AlignerMatchScore,
                                         AlignerNasmatch );
 int32_t AlnMaskLen;
 bool ExploratoryDeduplication = false;
-static size_t MinimumReads = 4;
-static size_t SplitBonus = 1;
+static size_t MinimumReads;
+static size_t SplitBonus;
 static double MaxDiffRate = 0.06;
 
 std::mutex Mtx;
@@ -244,6 +244,8 @@ int main(int argc, const char* argv[]) {
     //Set global variable across edges
     Edge_t::MinimumClipLen = Config.min_sc_size;
     ExploratoryDeduplication = Config.explore;
+    MinimumReads = Config.min_frag;
+    SplitBonus = Config.split_bonus;
     Stats = parse_stats(stats_file_name);
     JointHeader = sam_hdr_read(sam_open(bam_file_name.c_str(),"r"));
     //## Raw Data
