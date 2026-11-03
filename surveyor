@@ -504,7 +504,7 @@ extract_regions_cmd = ( f"{BIN_DICT['enumerate_chimeric_fragments']}"
                         f" sort -k1,1 -k9,9 -k2,2n -k3,3n -k4,4 -k10,10 -k5,5n"
                         f" -k6,6n -T {cmd_args.workdir}"
                         f" --parallel={cmd_args.threads} |"
-                        f" UTIL_DICT['compCand'] > {PATH_DICT['juncCand']}" )
+                        f" {UTIL_DICT['compCand']} > {PATH_DICT['juncCand']}" )
 if missing_file(PATH_DICT["juncCand"]):
     execute(extract_regions_cmd)
     if cmd_args.excluded_regions_bed is not None:
