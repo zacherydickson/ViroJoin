@@ -167,6 +167,7 @@ void LogMateAlnInfoList(const MateAlnInfoList_t  & list) {
 
 std::unordered_set<std::string> VirusNameSet;
 size_t MaxInsertSize;
+size_t MaxMergedFragmentLength;
 
 //===== Function Declarations
 
@@ -224,7 +225,9 @@ int main(int argc, char* argv[]) {
     std::ofstream outbed(bed_fname);
 
     //Set up the thread pool
-    int nThread = parse_config_threads(workdir + "/config.txt");
+    config_t config = parse_config(workdir + "/config.txt");
+    int nThread = config.threads;
+    MaxMergedFragmentLength = config.read_len * 2;
     ctpl::thread_pool thread_pool(nThread);
 
     //##LOAD DATA INTO GLOBAL VARIABLES
@@ -540,12 +543,12 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
             ChimericFragment_t frag(parentFrag);
             //Skip fragments where R2 alignments are inconsistent
             if(!AddMateAlignmentInfoToFragment(r2,frag)) { continue; }
+            size_t fragLen = frag.total_length();
             //Skip fragments which are too large
-            if( frag.length(ChimericFragment_t::IV1) +
-                frag.length(ChimericFragment_t::IV2) > MaxInsertSize)
-            {
-                continue;
-            }
+            if( fragLen > MaxInsertSize) { continue; }
+            //Skip fragments where R1 and R2 would be overlapping
+            //But the overall fragment is too long
+            if(frag.fromMerged() && fragLen > MaxMergedFragmentLength) { continue; }
             fragmentVec.push_back(frag);
         }
     }
@@ -560,9 +563,11 @@ void ProcessAlnVec(int id, std::ofstream & outbed, bam_hdr_t* header, AlnVector_
     }
     if(bValid){
         //Sort fragments so that comparable blocks are contiguous
+        // Note that we sort in descending order, because we process from the back
+        // in the next step
         std::sort(fragmentVec.begin(),fragmentVec.end(),
                 [](const ChimericFragment_t & a, const ChimericFragment_t & b) {
-                    return (a.compare(b) == -1);
+                    return (a.compare(b) == 1);
                 } );
         //Collect Complete fragments, and remove fragments which are
         //dominated by another (same fragment with better coverage/ support)
