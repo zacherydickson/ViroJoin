@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <iostream>
 #include <functional>
+#include <mutex>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -299,23 +300,11 @@ BPGraphVecPairMap_t ConstructBPGraphVecPairMap(
 {
     fprintf(stderr, "Constructing Breakpoint Graph Pairs ...\n");
     BPGraphVecPairMap_t gvPairMap;
-    std::vector<StrandLabelPair_t> labelVec;
-    for (const auto & label_fv_pair : fvMap) {
-        labelVec.push_back(label_fv_pair.first);
-    }
-    //Sort largest fragmentVec to largest
-    std::sort(labelVec.begin(),labelVec.end(),
-            [&fvMap](const StrandLabelPair_t & a, const StrandLabelPair_t & b) {
-                return fvMap.at(a).size() > fvMap.at(b).size();
-            } );
-    //for (const auto & label_fv_pair : fvMap) {
-    for (const auto & label : labelVec) {
-        //BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(label_fv_pair.second);
-        BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(fvMap.at(label));
+    for (const auto & pair : fvMap) {
+        BPGraphVecPair_t gvPair = ConstructBPGraphVecPair(pair.second);
         //Skip low support pairs
         if(gvPair.first.empty()) { continue; }
-        gvPairMap.insert({label,std::move(gvPair)});
-        //gvPairMap.insert({label_fv_pair.first,std::move(gvPair)});
+        gvPairMap.emplace(pair.first,std::move(gvPair));
     }
     fprintf(stderr, "Constructed %lu Breakpoint Graph Pairs\n",gvPairMap.size());
     return gvPairMap;
@@ -398,8 +387,8 @@ ReadRegionAssocVec_t ConstructReadRegionAssociations(
 //Takes the cliques generated in the graph map and builds regions from them
 //Which are then placed into a bipartite graph of host and viral regions
 CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
-    //fprintf(stderr, "Constructing Region Graph ... \n");
     CRegionGraph regGraph;
+    regGraph.reserveVertices(graphVecPair.first.size() + graphVecPair.second.size());
     for(const BPGraphVec_t * vec_ptr :
             {&graphVecPair.first,&graphVecPair.second} )
     {
@@ -441,9 +430,8 @@ CRegionGraph ConstructRegionGraph(const BPGraphVecPair_t & graphVecPair) {
             }
         }
     }
-    ////Explicitly request construction of edges
+    //Explicitly request construction of edges
     regGraph.ensureConstructed();
-    //fprintf(stderr, "Region graph with %d regions and %d edges created\n",regGraph.vcount(),regGraph.ecount());
     return regGraph;
 }
 
