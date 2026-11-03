@@ -451,7 +451,6 @@ void CBPGraph::constructEdges() {
         double pos;
     };
     bool bOpensLeft = GAB(&graph,"OpensLeft");
-    //std::cerr << "Pre Event construct\n";
     std::vector<event_t> eventVec;
     eventVec.reserve(this->vcount());
     for(igraph_int_t vid = 0; vid < this->vcount(); vid++){
@@ -520,7 +519,6 @@ void CBPGraph::constructEdges() {
     igraph_vector_int_init_array(&adjList, adjVec.data(), adjVec.size());
     igraph_add_edges(&graph,&adjList,nullptr);
     igraph_vector_int_destroy(&adjList);
-
     flag |= VALID_EDGES;
 }
 
@@ -538,9 +536,7 @@ void CBPGraph::ensureValidLookup() {
 
 void CBPGraph::ensureConstructed() {
     if((flag & VALID_EDGES)){ return; }
-    //std::cerr << "\t\tStart construction\n";
     this->constructEdges();
-    //std::cerr << "\t\tEnd construction\n";
 }
 
 //Construct subgraphs of minimum size from each connected component of this graph
