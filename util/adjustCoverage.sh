@@ -20,7 +20,8 @@ bamFile=$1;shift
 vNames=$1;shift
 rawRes=$1;shift
 
-
+#TODO: Coverage doesn't get updated for subsequence breakpoints at the same position
+#   Essentially gives preference to the the one which comes first
 "$bedtools" slop -s -l "$maxIS" -r 0 -i "$hBed" -g "$ctgLen" >| "$tmpBed";
 "$bedtools" slop -s -l 0 -r "$maxIS" -i "$vBed" -g "$ctgLen" >> "$tmpBed";
 "$samtools" depth -@ "$threads" -b "$tmpBed" "$bamFile" |
