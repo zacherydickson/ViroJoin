@@ -89,8 +89,9 @@ Version 2.3.1
 Version 2.3.2
 	Adding logging statements to and sped up enumerate_chimeric_fragments
 Version 2.3.4
-        Speed and Memory Usage improvements via:
+        Speed and Memory, and Disk usage improvements via:
 	Added filters to prevent considering fragments which are too large considering the implied overlap of their reads
         Added filter to prefer longer fragments when fragments differing by potential tandem repeats are encountered
         Pre-allocating vertices when constructing region graphs
+        Grouping Fragments with identical positions (assumed duplicates) prior to enumerate edges
         minor implementation changes
