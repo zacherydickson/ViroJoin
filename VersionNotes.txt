@@ -88,3 +88,9 @@ Version 2.3.1
 	Updated Duplicate Handling to reduce cases where a duplicate might be used to support a separate edge despite a marked duplicate being used
 Version 2.3.2
 	Adding logging statements to and sped up enumerate_chimeric_fragments
+Version 2.3.4
+        Speed and Memory Usage improvements via:
+	Added filters to prevent considering fragments which are too large considering the implied overlap of their reads
+        Added filter to prefer longer fragments when fragments differing by potential tandem repeats are encountered
+        Pre-allocating vertices when constructing region graphs
+        minor implementation changes
