@@ -11,6 +11,8 @@ const int MIN_CLIP_LEN = 5;
 struct config_t {
     int threads;
     int min_sc_size, max_sc_dist, max_alt_aln;
+    int min_frag;
+    int split_bonus;
     int read_len;
     std::string cram_reference;
     bool explore;
@@ -27,11 +29,23 @@ config_t parse_config(std::string file) {
     fin.close();
 
     config_t config;
-    config.threads = stoi(config_params["threads"]);
-    config.min_sc_size = stoi(config_params["min_sc_size"]);
-    config.max_sc_dist = stoi(config_params["max_sc_dist"]);
-    config.read_len = stoi(config_params["read_len"]);
-    config.max_alt_aln = stoi(config_params["max_alt_aln"]);
+    //Integer configs
+    std::unordered_map<std::string,int*> integerParams = {
+        {"threads", &config.threads},
+        {"min_sc_size", &config.min_sc_size},
+        {"max_sc_dist", &config.max_sc_dist},
+        {"max_alt_aln", &config.max_alt_aln},
+        {"min_frag", &config.min_frag},
+        {"split_bonus", &config.split_bonus},
+        {"read_len", &config.read_len},
+    };
+    for(const auto & pair : integerParams) {
+        auto it = config_params.find(pair.first);
+        if(it == config_params.end()) {
+            throw std::invalid_argument("Provided config file is missing " + pair.first);
+        }
+        *(pair.second) = stoi(it->second);
+    }
     if (config_params.count("cram_reference")) {
         config.cram_reference = config_params["cram_reference"];
     }

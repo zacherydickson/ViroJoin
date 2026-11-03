@@ -97,3 +97,5 @@ Version 2.3.4
         Pre-allocating vertices when constructing region graphs
         Grouping Fragments with identical positions (assumed duplicates) prior to enumerate edges
         minor implementation changes
+Version 2.3.4+MinFragments
+	Added command line options --minFrag and --splitBonus to control the amount of support required to call a junction

@@ -77,6 +77,11 @@ cmd_parser.add_argument('--dust', help='Dust path.', default='dust')
 cmd_parser.add_argument('--excluded_regions_bed', \
                         help=   'Can use to exclude repetetive regions or'
                                 ' uninteresting portions of the genome')
+cmd_parser.add_argument('--minFrag', type=int, default=4, \
+                        help='Minimum number of fragments supporting a junction.')
+cmd_parser.add_argument('--splitBonus', type=int,default=1, \
+                        help=   'The number by which to reduce the minimum support'
+                                ' if a split read is present.')
 cmd_parser.add_argument('--minClipSize', type=int, default=20, \
                         help='Min size for a clip to be considered.')
 cmd_parser.add_argument('--maxAltAln', type=int, default=0,
@@ -291,6 +296,8 @@ if missing_file(PATH_DICT["config"]):
         config_file.write(f"max_alt_aln {cmd_args.maxAltAln}\n")
         config_file.write(f"explore {cmd_args.exploratory}\n")
         config_file.write(f"clique {cmd_args.cliqueClusters}\n")
+        config_file.write(f"min_frag {cmd_args.minFrag}\n")
+        config_file.write(f"split_bonus {cmd_args.splitBonus}\n")
 # Generate general distribution of insert sizes
 if missing_file(PATH_DICT["ctgMap"]):
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:
