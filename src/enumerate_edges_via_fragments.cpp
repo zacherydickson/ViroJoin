@@ -72,11 +72,11 @@ typedef std::vector<size_t> IndexVec_t;
 //==== GLOBAL VARIABLE DECLARATIONS
 
 int             MaxInsertSize;
-const size_t    MinimumReads = 4;
+size_t          MinimumReads;
 int             ReadLength;
-const int       SplitBonus = 1;
+int             SplitBonus;
 const double    SplitFactor = 2.0;
-int             UpstreamSize = 5;
+const int       UpstreamSize = 5;
 bool	        BCliqueClustering = false;
 constexpr auto  MaxStreamSize = std::numeric_limits<std::streamsize>::max();
 
@@ -190,6 +190,8 @@ int main(int argc, char* argv[]) {
     auto config = parse_config(config_file_name);
     ReadLength = config.read_len;
     size_t nThread = config.threads;
+    MinimumReads = config.min_frag;
+    SplitBonus = config.split_bonus;
     BCliqueClustering = config.clique;
 
 
