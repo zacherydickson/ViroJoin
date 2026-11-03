@@ -69,7 +69,6 @@ class ChimericFragment_t {
     size_t n_reads(IV_IDX ivIdx) const {
         return bool(flag[ivIdx] & FROM_R1) + bool(flag[ivIdx] & FROM_R2);
     }
-    size_t n_split() const;
     public:
     size_t distal_pos(IV_IDX ivIdx) const {
         return (flag[ivIdx] & OPENS_LEFT) ? end[ivIdx] : off[ivIdx] + 1;
@@ -79,6 +78,7 @@ class ChimericFragment_t {
     }
     bool fromR1(IV_IDX ivIdx) const { return flag[ivIdx] & FROM_R1; }
     bool fromR2(IV_IDX ivIdx) const { return flag[ivIdx] & FROM_R2; }
+    bool fromMerged() const;
     size_t getEnd(IV_IDX ivIdx) const { return end[ivIdx]; }
     const std::string & getName() const { return name; }
     const std::string & getChr(IV_IDX ivIdx) const { return chr[ivIdx]; }
@@ -88,6 +88,7 @@ class ChimericFragment_t {
     bool is_complete() const { return this->both(DISTAL_IS_TERMINAL); }
     bool is_split(IV_IDX ivIdx) const { return this->flag[ivIdx] & IS_SPLIT; }
     bool not_chimeric() const;
+    size_t n_split() const;
     size_t proximal_pos(IV_IDX ivIdx) const {
         return (flag[ivIdx] & OPENS_LEFT) ? off[ivIdx]+1 : end[ivIdx];
     }
@@ -96,6 +97,9 @@ class ChimericFragment_t {
     }
     size_t length(IV_IDX ivIdx) const {
         return (flag[ivIdx] & HAS_INTERVAL) ? end[ivIdx] - off[ivIdx] : 0;
+    }
+    size_t total_length() const {
+        return this->length(IV1) + this->length(IV2);
     }
     //Mutators
     protected:
@@ -250,6 +254,10 @@ int ChimericFragment_t::compare (const ChimericFragment_t & other) const {
         {
             return (this->flag[ivIdx] & OPENS_LEFT) ?  -1 : 1;
         }
+        //Position sort on proximal pos
+        if(this->proximal_pos(ivIdx) != other.proximal_pos(ivIdx)) {
+            return (this->proximal_pos(ivIdx) < other.proximal_pos(ivIdx)) ? -1 : 1;
+        }
     }
     if( this->n_split() != other.n_split() ) {
         return (this->n_split() < other.n_split()) ? -1 : 1;
@@ -303,11 +311,14 @@ int ChimericFragment_t::dominant_comparison (const ChimericFragment_t & other) c
     for(IV_IDX ivIdx : {IV1, IV2}){
         //Skip unsplit intervals
         if(!(flag[ivIdx] & IS_SPLIT)) { continue; }
-        //If the proximal positions do not match
-        if(this->proximal_pos(ivIdx) != other.proximal_pos(ivIdx)){
-            //They imply different breakpoints and cannot be compared
-            return 0;
-        }
+        //Skip matching intervals
+        if(this->proximal_pos(ivIdx) == other.proximal_pos(ivIdx)) { continue; }
+        //The fragments imply different breakpoints, perhaps a tandem repeat?
+        //Note: if the lengths are the same that means that the IV1 length difference cancels out the IV2
+        //  which means the implied breakpoints differ on both intervals, we'll consider that incomparable
+        if(this->total_length() == other.total_length()) { return 0; }
+        //Take the longer fragment
+        return (this->total_length() > other.total_length()) ? 1 : -1;
     }
     //Proximal positions on any split intervals match
     // Assess which fragment has more R1,R2 support on each interval
@@ -373,6 +384,13 @@ ChimericFragment_t ChimericFragment_t::from_bedpe(const std::string bedpe) {
                     uint16_t(vals[4] & ((1 << FLAG_BITS) - 1))
     };
     return frag;
+}
+
+//Check if both IV1 and IV2 have information from both R1 and R2
+//This may be equivalent to this->n_split() == 2
+bool ChimericFragment_t::fromMerged() const {
+    uint16_t mask = FROM_R1 | FROM_R2;
+    return ((flag[IV1] & mask) & (flag[IV2] & mask)) == mask;
 }
 
 size_t ChimericFragment_t::n_split() const {

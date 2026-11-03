@@ -113,6 +113,7 @@ public:
 protected:
     igraph_t graph;
     uint8_t flag;
+    igraph_int_t nAssigned;
     // Internal caches for O(log N) vertex uniqueness checks and property tracking
     std::unordered_multimap<std::string, igraph_integer_t> vertex_by_fragment;
     std::vector<EdgeProps> queuedEdges;
@@ -122,7 +123,7 @@ protected:
 public:
     CRegionGraph(size_t nVertices = 0);
     ~CRegionGraph();
-    // Delete copy semantics to prevent double-freeing the underlying igraph_t resource
+    // Delete copy semantics to preven;t double-freeing the underlying igraph_t resource
     CRegionGraph(const CRegionGraph&) = delete;
     CRegionGraph& operator=(const CRegionGraph&) = delete;
     // Move semantics
@@ -136,7 +137,8 @@ public:
     const VertexProps & get_vertex_properties(int id) const;
     bool hasValidLookup() const {return (flag & VALID_LOOKUP) ? true : false; };
 
-    int vcount() const { return igraph_vcount(&graph); }
+    int vcount() const { return this->nAssigned; }
+    int vcapacity() const { return igraph_vcount(&graph); }
     int ecount() const { return igraph_ecount(&graph); }
 //Methods:
 public:
@@ -148,6 +150,7 @@ public:
     void mergeUninformitiveOverlap();
     void ensureConstructed();
     static CRegionGraph merge_graphs(const std::vector<CRegionGraph> & graphVec);
+    void reserveVertices(igraph_int_t nVertices);
     void write_edgelist(FILE * outstream) const;
 private:
     void assertOwnership();
@@ -162,12 +165,12 @@ private:
 //DEFINITIONS
 
 //Constructor
-CRegionGraph::CRegionGraph(size_t nVerticies) :
-    flag(OWNS_GRAPH | VALID_LOOKUP)
+CRegionGraph::CRegionGraph(size_t nVertices) :
+    flag(OWNS_GRAPH | VALID_LOOKUP), nAssigned(nVertices)
 {
     init_attribute_table();
     // Initialize an undirected graph
-    if (igraph_empty(&graph, nVerticies, IGRAPH_UNDIRECTED) != IGRAPH_SUCCESS) {
+    if (igraph_empty(&graph, nVertices, IGRAPH_UNDIRECTED) != IGRAPH_SUCCESS) {
         throw std::runtime_error("Failed to initialize igraph object.");
     }
     // Set graph-level attributes
@@ -185,6 +188,7 @@ CRegionGraph::~CRegionGraph () {
 CRegionGraph::CRegionGraph(CRegionGraph&& other) :
     graph(std::move(other.graph)),
     flag(other.flag),
+    nAssigned(other.nAssigned),
     vertex_by_fragment(std::move(other.vertex_by_fragment)),
     vertices(std::move(other.vertices))
 {
@@ -197,6 +201,7 @@ CRegionGraph& CRegionGraph::operator=(CRegionGraph&& other) {
     if(flag & OWNS_GRAPH) { igraph_destroy(&graph); }
     graph = std::move(other.graph);
     flag = other.flag;
+    nAssigned = nAssigned;
     vertex_by_fragment = std::move(other.vertex_by_fragment);
     vertices = std::move(other.vertices);
     other.flag &= ~OWNS_GRAPH;
@@ -224,7 +229,15 @@ void CRegionGraph::addOrUpdateVertex(   std::string chromosome, bool opensLeft,
     ensureValidLookup();
 
     igraph_integer_t new_vid = igraph_vcount(&graph);
-    igraph_add_vertices(&graph, 1, nullptr);
+    //For graphs where vertexes are pre-allocated, a new one need only be added
+    // if we are exceeding the pre-allocation (the number of asssigned verticies
+    // is greater or equal to the number allocated verticies)
+    if(nAssigned < new_vid) {
+        new_vid = nAssigned;
+    } else {
+        igraph_add_vertices(&graph, 1, nullptr);
+    }
+    nAssigned++;
 
     //Get the set of old verticies which also have these fragments
     std::vector<std::string> uniqFrags;
@@ -343,8 +356,8 @@ void CRegionGraph::ensureValidLookup() {
     if(flag & VALID_LOOKUP) { return; }
     vertex_by_fragment.clear();
     vertices.clear();
-    vertices.resize(this->vcount());
-    for(int i = 0; i < this->vcount(); i++){
+    vertices.resize(nAssigned);
+    for(int i = 0; i < nAssigned; i++){
         for(std::string fragGrp : strsplit(VAS(&graph,"assocFragGrps",i),FragDelim)){
             for( std::string fragName : strsplit(fragGrp,DupDelim)){
                 vertex_by_fragment.emplace(fragName,i);
@@ -501,7 +514,7 @@ void CRegionGraph::mergeUninformitiveOverlap() {
     ensureConstructed();
     ensureValidLookup();
     std::vector<VertexProps> sortedVertexProps;
-    for(igraph_int_t i = 0; i < this->vcount(); i++){
+    for(igraph_int_t i = 0; i < nAssigned; i++){
         sortedVertexProps.push_back(this->get_vertex_properties(i));
     }
     std::sort(  sortedVertexProps.begin(),sortedVertexProps.end(),
@@ -563,6 +576,7 @@ void CRegionGraph::mergeUninformitiveOverlap() {
     for(igraph_int_t id : toRemoveSet){
         VECTOR(toRemove)[counter++] = id;
     }
+    nAssigned -= toRemoveSet.size();
     igraph_delete_vertices(&graph,igraph_vss_vector(&toRemove));
     igraph_vector_int_destroy(&toRemove);
     //Add the merged vertices back in
@@ -661,6 +675,15 @@ CRegionGraph CRegionGraph::merge_graphs(const std::vector<CRegionGraph> & graphV
     }
     //Return the merged graph
     return mergedRegGraph;
+}
+
+
+void CRegionGraph::reserveVertices(igraph_int_t nVertices) {
+    if(igraph_vcount(&graph) > nVertices) {
+        return;
+    }
+    igraph_int_t toAdd = nVertices - igraph_vcount(&graph);
+    igraph_add_vertices(&graph, toAdd, nullptr);
 }
 
 void CRegionGraph::write_edgelist(FILE * outstream) const {
