@@ -11,7 +11,7 @@
 #include "utils.h"
 
 void print_calls(std::vector<call_t>& calls) {
-    for (int i = 0; i < calls.size(); i++) {
+    for (size_t i = 0; i < calls.size(); i++) {
         call_t call = calls[i];
         if (!call.removed) {
             std::cout << call.to_human_string() << std::endl;
@@ -38,6 +38,9 @@ int main(int argc, char* argv[]) {
     std::string workdir = argv[1];
 
     config_t config = parse_config(workdir + "/config.txt");
+    double min_pairs = config.min_frag;
+    double split_bonus = config.split_bonus;
+    double min_seq_len = double(config.read_len)/2.0;
 
     std::vector<std::string> args;
     bool print_rejected = false, accept_clipped = false, remapped = false;
@@ -55,14 +58,12 @@ int main(int argc, char* argv[]) {
 
     std::ifstream fin(workdir + (remapped ? "/results.remapped.txt" : "/results.txt"));
 
-    double min_pairs = 4;
-    if (args.size() >= 2) min_pairs = std::stoi(args[1]);
 
     double min_host_pbs = 0.8;
-    if (args.size() >= 3) min_host_pbs = std::stod(args[2]);
+    if (args.size() >= 2) min_host_pbs = std::stod(args[2]);
 
     double min_cov_for_accept = 0.5;
-    if (args.size() >= 4) min_cov_for_accept = std::stod(args[3]);
+    if (args.size() >= 3) min_cov_for_accept = std::stod(args[3]);
 
 
     // read host and virus sequences
@@ -98,11 +99,13 @@ int main(int argc, char* argv[]) {
 
         bool accept = true;
         if (call.host_pbs < min_host_pbs) accept = false;
-        if (call.good_pairs < min_pairs-1 || (call.good_pairs == min_pairs-1 && call.split_reads == 0)) accept = false;
+        if (    (call.good_pairs < min_pairs-split_bonus) ||
+                (call.good_pairs < min_pairs && call.split_reads == 0) )
+        { accept = false; }
 
         std::string host_seq = host_virus_bp_seqs[call.id].first;
         std::string virus_seq = host_virus_bp_seqs[call.id].second;
-        if (host_seq.length() < config.read_len/2 || virus_seq.length() < config.read_len/2) {
+        if (host_seq.length() < min_seq_len || virus_seq.length() < min_seq_len) {
             accept = false;
         }
 
@@ -124,11 +127,11 @@ int main(int argc, char* argv[]) {
 
 
     // find pairs
-    for (int i = 0; i < accepted_calls.size(); i++) {
+    for (size_t i = 0; i < accepted_calls.size(); i++) {
         call_t a_call1 = accepted_calls[i];
 
         int pair_j = -1, min_dist = INT32_MAX;
-        for (int j = i+1; j < accepted_calls.size(); j++) {
+        for (size_t j = i+1; j < accepted_calls.size(); j++) {
             call_t a_call2 = accepted_calls[j];
             if (a_call2.is_paired()) continue;
 
@@ -145,12 +148,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    for (int i = 0; i < accepted_calls.size(); i++) {
+    for (size_t i = 0; i < accepted_calls.size(); i++) {
         call_t a_call = accepted_calls[i];
         if (a_call.is_paired()) continue;
 
         int pair_j = -1, min_dist = INT32_MAX;
-        for (int j = 0; j < rejected_calls.size(); j++) {
+        for (size_t j = 0; j < rejected_calls.size(); j++) {
             if (rejected_calls[j].is_paired()) continue;
 
             call_t r_call = rejected_calls[j];
@@ -171,11 +174,11 @@ int main(int argc, char* argv[]) {
 
     // find duplicates
     StripedSmithWaterman::Aligner aligner(1, 4, 6, 1, false);
-    for (int j = 0; j < accepted_calls.size(); j++) {
+    for (size_t j = 0; j < accepted_calls.size(); j++) {
         std::string hseq_j = host_virus_bp_seqs[accepted_calls[j].id].first;
         std::string vseq_j = host_virus_bp_seqs[accepted_calls[j].id].second;
 
-        for (int i = 0; i < j; i++) {
+        for (size_t i = 0; i < j; i++) {
             std::string hseq_i = host_virus_bp_seqs[accepted_calls[i].id].first;
             std::string vseq_i = host_virus_bp_seqs[accepted_calls[i].id].second;
 
