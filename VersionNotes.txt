@@ -103,3 +103,5 @@ Version 2.4.1
 	Fixed bug where auxiliary files for compressed junction candidates were not placed in the working directory
 Version 2.5.0
 	Added a way to enable/disable the Dust filter, disabled is now the default behaviour
+Version V2.5.1
+	Updated default maxAltAln to 2000

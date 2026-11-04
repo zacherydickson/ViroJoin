@@ -85,9 +85,10 @@ cmd_parser.add_argument('--splitBonus', type=int,default=1, \
                                 ' if a split read is present.')
 cmd_parser.add_argument('--minClipSize', type=int, default=20, \
                         help='Min size for a clip to be considered.')
-cmd_parser.add_argument('--maxAltAln', type=int, default=0,
-                        help='Max number of alternative alignments for a \
-                                read to be considered; 0 means no limit')
+cmd_parser.add_argument('--maxAltAln', type=int, default=2000,
+                        help=   'Max number of alternative alignments for a'
+                                ' read to be considered; 0 means no limit'
+                                ' (may be incredibly slow)')
 cmd_parser.add_argument('--maxSCDist', type=int, default=10,
                         help='Max SC distance.')
 cmd_parser.add_argument('--clean_first', action='store_true',
