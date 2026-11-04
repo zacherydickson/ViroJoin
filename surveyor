@@ -54,7 +54,8 @@ def eprint(*args, **kwargs):
 
 cmd_parser = argparse.ArgumentParser(description=   'ViroJoin, a virus'
                                                     ' integration caller.',
-                                     prog="ViroJoin")
+                                     prog="ViroJoin",
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 cmd_parser.add_argument('fq1',
                         help='Input Fwd Reads in fastq format.')
 cmd_parser.add_argument('fq2',
@@ -73,7 +74,7 @@ cmd_parser.add_argument('--threads', type=int, default=1,
 cmd_parser.add_argument('--bwa', default='bwa', help='BWA path.')
 cmd_parser.add_argument('--bedtools', help='Bedtools path.', default='bedtools')
 cmd_parser.add_argument('--samtools', help='Samtools path.', default='samtools')
-cmd_parser.add_argument('--dust', help='Dust path.', default='dust')
+cmd_parser.add_argument('--dust', help='Dust path; Specify to enable dust filter.', default='none')
 cmd_parser.add_argument('--excluded_regions_bed', \
                         help=   'Can use to exclude repetetive regions or'
                                 ' uninteresting portions of the genome')
@@ -545,7 +546,9 @@ if missing_file(PATH_DICT["allReadsx"]):
 ##Dust Filter the breakpoint sequences
 for side in ("host", "virus"):
     tgtFile = f"{cmd_args.workdir}/{side}_bp_seqs.masked.bed"
-    dust_cmd = f"{cmd_args.dust} {cmd_args.workdir}/{side}_bp_seqs.fa > {tgtFile}"
+    dust_cmd = f"touch {tgtFile}"
+    if cmd_args.dust != 'none':
+        dust_cmd = f"{cmd_args.dust} {cmd_args.workdir}/{side}_bp_seqs.fa > {tgtFile}"
     if missing_file(tgtFile):
         execute(dust_cmd)
 ####Retreive the breakpoint region coverage
