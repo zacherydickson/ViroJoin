@@ -91,6 +91,9 @@ cmd_parser.add_argument('--maxAltAln', type=int, default=2000,
                                 ' (may be incredibly slow)')
 cmd_parser.add_argument('--maxSCDist', type=int, default=10,
                         help='Max SC distance.')
+cmd_parser.add_argument('--maxUsedFrac', type=float, default=0.5,
+                        help=   'Maximum fraction of candidate fragments'
+                                ' already assigned to other junctions.')
 cmd_parser.add_argument('--clean_first', action='store_true',
                         help=   'Before processing, any files already in the'
                                 ' working directory are erased - By default'
@@ -287,6 +290,10 @@ if (cmd_args.minFrag - cmd_args.splitBonus) <= 1:
     eprint("[ERROR] minFrag less splitBonus must greater than 1")
     sys.exit(1)
 
+if (cmd_args.maxUsedFrac < 0 or cmd_args.maxUsedFrac > 1):
+    eprint("[ERROR] maxUsedFrac must be between 0 and 1, inclusive")
+    sys.exit(1)
+
 #Remove workdir if requested
 if cmd_args.clean_first:
     shutil.rmtree(cmd_args.workdir,ignore_errors=True)
@@ -304,6 +311,7 @@ if missing_file(PATH_DICT["config"]):
         config_file.write(f"clique {cmd_args.cliqueClusters}\n")
         config_file.write(f"min_frag {cmd_args.minFrag}\n")
         config_file.write(f"split_bonus {cmd_args.splitBonus}\n")
+        config_file.write(f"max_used_frac {cmd_args.maxUsedFrac}\n")
 # Generate general distribution of insert sizes
 if missing_file(PATH_DICT["ctgMap"]):
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:

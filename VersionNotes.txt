@@ -105,3 +105,5 @@ Version 2.5.0
 	Added a way to enable/disable the Dust filter, disabled is now the default behaviour
 Version V2.5.1
 	Updated default maxAltAln to 2000
+Version V2.6.0
+	Added a command line option --maxUsedFrac to allow filtering of junctions which share support with other, better supported junctions

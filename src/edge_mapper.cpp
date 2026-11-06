@@ -248,6 +248,8 @@ int main(int argc, const char* argv[]) {
     MinimumReads = Config.min_frag;
     SplitBonus = Config.split_bonus;
     Stats = parse_stats(stats_file_name);
+    MaxUsedFrac = Config.max_used_frac;
+
     JointHeader = sam_hdr_read(sam_open(bam_file_name.c_str(),"r"));
     //## Raw Data
     Read2RegionsMap_t  read2regSetMap;

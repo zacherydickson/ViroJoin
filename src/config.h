@@ -17,6 +17,7 @@ struct config_t {
     std::string cram_reference;
     bool explore;
     bool clique;
+    double max_used_frac;
 };
 
 config_t parse_config(std::string file) {
@@ -51,6 +52,7 @@ config_t parse_config(std::string file) {
     }
     config.explore = config_params["explore"] == "True";
     config.clique = config_params["clique"] == "True";
+    config.max_used_frac = stod(config_params["max_used_frac"]);
     return config;
 };
 
