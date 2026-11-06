@@ -55,6 +55,8 @@ protected:
 public:
     BranchedQueueNode_t(const EdgeType& e)
         : childQueue(nullptr), descendentElements(e.getSupport()), edge(e), originalElements(e.getSupport()) {}
+    const EdgeType & getEdge() const { return this->edge; }
+    const ElementSetType & getOriginalElements() const { return this->originalElements; }
 
 protected:
     void addNode(BranchedQueueNode_pt<EdgeType, ElementType, ElementSetType, ContextType> node,
@@ -107,13 +109,18 @@ public:
         return this->nElements;
     }
 
-    const EdgeType& top() const {
+    const BranchedQueueNode_pt<EdgeType,ElementType,ElementSetType,ContextType> & top_node() const {
         if (this->data.empty()) {
             throw std::logic_error("Attempt to call top on empty CBranchedQueue");
         }
         //Explicit call to make sure the offsets are current
         this->data.front()->edge.getOffsets();
-        return this->data.front()->edge;
+        return this->data.front();
+    }
+
+    const EdgeType& top() const {
+        const auto & node = this->top_node();
+        return node->edge;
     }
 
     void addEdge(const EdgeType& edge) {
