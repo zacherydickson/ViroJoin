@@ -1651,9 +1651,9 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
         double usedFrac = double(nUsed) / double(nUsed + edge.getSupport().size());
         if(PassesEffectiveReadCount(edge) && usedFrac <= MaxUsedFrac){
             //Output to the res file, bam files, and fasta files
-            OutputEdgeCall(nextJunctionID,edge,alnMap,out);
-            OutputEdgeReads(nextJunctionID,edge,alnMap,readDir);
-            OutputEdgeBP(nextJunctionID,hbpOut,vbpOut,edge,alnMap);
+            OutputEdgeCall(edge.id,edge,alnMap,out);
+            OutputEdgeReads(edge.id,edge,alnMap,readDir);
+            OutputEdgeBP(edge.id,hbpOut,vbpOut,edge,alnMap);
             //Update the used Set
             edge.markSupportUsed();
             //used.insert(edge.getSupport().begin(),edge.getSupport().end());
