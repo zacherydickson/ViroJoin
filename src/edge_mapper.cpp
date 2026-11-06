@@ -78,6 +78,7 @@ bool ExploratoryDeduplication = false;
 static size_t MinimumReads;
 static size_t SplitBonus;
 static double MaxDiffRate = 0.06;
+static double MaxUsedFrac = 1.0;
 
 std::mutex Mtx;
 
@@ -1637,8 +1638,16 @@ void OutputEdgesByQ(   EdgeVec_t & edgeVec,const AlignmentMap_t & alnMap,
     size_t start = edgeQueue.queueSize();
     int pert = 0;
     while(!edgeQueue.empty()){
-        const Edge_t & edge = edgeQueue.top();
-        if(PassesEffectiveReadCount(edge)){
+        const auto & topNode = edgeQueue.top_node();
+        //const Edge_t & edge = edgeQueue.top();
+        const Edge_t & edge = topNode->getEdge();
+        const auto & origSupport = topNode->getOriginalElements();
+        size_t nUsed = 0;
+        for(const auto & frag : origSupport) {
+            if(frag->isUsed()) { nUsed++; }
+        }
+        double usedFrac = double(nUsed) / double(nUsed + edge.getSupport().size());
+        if(PassesEffectiveReadCount(edge) && usedFrac <= MaxUsedFrac){
             //Output to the res file, bam files, and fasta files
             OutputEdgeCall(nextJunctionID,edge,alnMap,out);
             OutputEdgeReads(nextJunctionID,edge,alnMap,readDir);
