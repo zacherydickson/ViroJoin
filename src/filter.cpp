@@ -70,11 +70,13 @@ int main(int argc, char* argv[]) {
     std::string host_bp_seqs_fname = workdir + "/host_bp_seqs.fa", virus_bp_seqs_fname = workdir + "/virus_bp_seqs.fa";
     FILE* host_bp_fasta = fopen(host_bp_seqs_fname.c_str(), "r"), *virus_bp_fasta = fopen(virus_bp_seqs_fname.c_str(), "r");
     kseq_t* hseq = kseq_init(fileno(host_bp_fasta)), *vseq = kseq_init(fileno(virus_bp_fasta));
-    std::vector<std::pair<std::string, std::string> > host_virus_bp_seqs;
-    std::vector<std::pair<int, int> > host_virus_bp_Ns;
+    std::unordered_map<size_t,std::pair<std::string, std::string> > host_virus_bp_seqs;
+    std::unordered_map<size_t,std::pair<int, int> > host_virus_bp_Ns;
     while (kseq_read(hseq) >= 0 && kseq_read(vseq) >= 0) {
-        host_virus_bp_seqs.push_back({hseq->seq.s, vseq->seq.s});
-        host_virus_bp_Ns.push_back({0, 0});
+        std::string name(hseq->name.s);
+        size_t callid = std::stoul(name.substr(0,name.length()-2));
+        host_virus_bp_seqs[callid] = {hseq->seq.s, vseq->seq.s};
+        host_virus_bp_Ns[callid] = {0, 0};
     }
 
     std::string host_bp_seqs_masks_fname = workdir + "/host_bp_seqs.masked.bed",
@@ -84,12 +86,12 @@ int main(int argc, char* argv[]) {
     std::string id;
     int start, end;
     while (host_bp_masks_fin >> id >> start >> end) {
-        int n = std::stoi(id.substr(0, id.length()-2));
-        host_virus_bp_Ns[n].first = end-start+1;
+        size_t callid = std::stoul(id.substr(0,id.length()-2));
+        host_virus_bp_Ns[callid].first = end-start+1;
     }
     while (virus_bp_masks_fin >> id >> start >> end) {
-        int n = std::stoi(id.substr(0, id.length()-2));
-        host_virus_bp_Ns[n].second = end-start+1;
+        size_t callid = std::stoul(id.substr(0,id.length()-2));
+        host_virus_bp_Ns[callid].second = end-start+1;
     }
 
     std::vector<call_t> accepted_calls, rejected_calls;

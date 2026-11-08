@@ -109,3 +109,5 @@ Version V2.6.0
 	Added a command line option --maxUsedFrac to allow filtering of junctions which share support with other, better supported junctions
 Version V2.6.1
 	Output Junction IDs now match internal edge Ids for traceability
+Version 2.6.2
+	Bug Fix - fixed fatal filtering error due to shift to edge-ids as final junction call ids
