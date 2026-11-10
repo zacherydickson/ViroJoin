@@ -14,10 +14,12 @@ struct config_t {
     int min_frag;
     int split_bonus;
     int read_len;
+    int max_raw_alt_dist;
     std::string cram_reference;
     bool explore;
     bool clique;
     double max_used_frac;
+    double max_prop_alt_dist;
 };
 
 config_t parse_config(std::string file) {
@@ -39,6 +41,7 @@ config_t parse_config(std::string file) {
         {"min_frag", &config.min_frag},
         {"split_bonus", &config.split_bonus},
         {"read_len", &config.read_len},
+        {"max_raw_alt_dist", &config.max_raw_alt_dist},
     };
     for(const auto & pair : integerParams) {
         auto it = config_params.find(pair.first);
@@ -53,6 +56,7 @@ config_t parse_config(std::string file) {
     config.explore = config_params["explore"] == "True";
     config.clique = config_params["clique"] == "True";
     config.max_used_frac = stod(config_params["max_used_frac"]);
+    config.max_prop_alt_dist = stod(config_params["max_prop_alt_dist"]);
     return config;
 };
 
