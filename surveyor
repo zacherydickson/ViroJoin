@@ -67,16 +67,20 @@ class ExecutionController:
             )
 
         self.force_from = force_from.lower()
+        self.force_index = None
+        if force_from is not None:
+            self.force_index = self.STEPS.index(self.force_from)
         self.force = False
 
-    def should_execute(self, step, targets):
+    def should_execute(self, step, targets=None):
         if step not in self.STEPS:
             raise ValueError(f"Unknown pipeline step: {step}")
-
-        if step == self.force_from:
+        step_index = self.STEPS.index(step)
+        forced = self.force_index is not None and step_index >= self.force_index
+        if forced:
             self.force = True
 
-        return self.force or not all(
+        return self.force or targets is not None and not all(
             os.path.isfile(target) for target in targets
         )
 
