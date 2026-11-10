@@ -146,6 +146,8 @@ int main(int argc, char* argv[]) {
     double min_pairs = config.min_frag;
     double split_bonus = config.split_bonus;
     double min_seq_len = double(config.read_len)/2.0;
+    MaxAltRawDistance = config.max_raw_alt_dist;
+    MaxAltPropDistance = config.max_prop_alt_dist;
 
     std::vector<std::string> args;
     bool    print_rejected = false, accept_clipped = false,
