@@ -120,6 +120,21 @@ cmd_parser.add_argument('--exploratory',action='store_true',
 cmd_parser.add_argument('--cliqueClusters',action='store_true',
                         help=   'Split nearby candidates more finely to allow'
                                 ' multiple breakpoints in one region' )
+cmd_parser.add_argument('--maxRawAltDist', type=int, default=-1,
+                        help=   'If two junctions have a breakpoint on the same'
+                                ' contig and strand within this distance, the'
+                                ' lower scoring junction will be filtered and'
+                                ' marked as an alternate mapping of the other;'
+                                ' negative values disable the filter; Works as'
+                                ' an AND filter with maxPropAltDistance.' )
+cmd_parser.add_argument('--maxPropAltDist', type=float, default=0.01,
+                        help=   'If two junctions have a breakpoint on the same'
+                                ' contig and strand within this proportion of'
+                                ' the contig\'s length, the lower scoring'
+                                ' junction will be filtered and marked as an'
+                                ' alternate mapping of the other; negative'
+                                ' values disable the filter; Works as an AND'
+                                ' filter with maxRawAltDistance.' )
 cmd_parser.add_argument('--version',action = 'version',
                         version='%(prog)s ' + str(__version__))
 cmd_args = cmd_parser.parse_args()
@@ -312,6 +327,8 @@ if missing_file(PATH_DICT["config"]):
         config_file.write(f"min_frag {cmd_args.minFrag}\n")
         config_file.write(f"split_bonus {cmd_args.splitBonus}\n")
         config_file.write(f"max_used_frac {cmd_args.maxUsedFrac}\n")
+        config_file.write(f"max_raw_alt_dist {cmd_args.maxRawAltDist}\n")
+        config_file.write(f"max_prop_alt_dist {cmd_args.maxPropAltDist}\n")
 # Generate general distribution of insert sizes
 if missing_file(PATH_DICT["ctgMap"]):
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:
