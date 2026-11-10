@@ -55,9 +55,10 @@ def eprint(*args, **kwargs):
 class ExecutionController:
     "Small Handler for determining if a pipeline step must be run"
     STEPS = [   "init" , "config", "contig_mapping", "is_params",
-                "isolation", "primary_aln", "clean_sort", "clip_aln",
-                "collect_aln", "enum_chimera", "enum_edge", "edge_mapping",
-                "collect_reads", "dust_filter", "adj_coverage", "filter"
+                "isolation", "primary_aln", "clean_sort", "extract_clips",
+                "clip_aln", "collect_aln", "enum_chimera", "enum_edge",
+                "edge_mapping", "collect_reads", "dust_filter",
+                "make_bed", "adj_coverage", "filter"
             ]
     def __init__(self, force_from=None):
         if force_from is not None:
@@ -358,7 +359,7 @@ except ValueError as ex:
 if cmd_args.clean_first:
     shutil.rmtree(cmd_args.workdir,ignore_errors=True)
 #Create workdir
-if not os.path.exists(cmd_args.workdir):
+if not os.path.isdir(cmd_args.workdir):
     os.makedirs(cmd_args.workdir)
 # Create config file in workdir
 # === STEP config
@@ -403,6 +404,9 @@ if executor.should_execute("contig_mapping",
             with pyfaidx.Fasta(reference_fa_file) as reference_fa:
                 for key,seq in reference_fa.items():
                     contig_lengths.write(f"{key}\t{seq.unpadded_len}\n")
+
+# === STEP is_params
+
 #Construct Bam workspace for fastq input
 bam_workspace = os.path.join(cmd_args.workdir,"bam_0")
 path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
@@ -411,8 +415,9 @@ path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
         "stats" : "stats.txt"
     }.items()
 }
-if not os.path.exists(bam_workspace):
+if not os.path.isdir(bam_workspace):
     os.makedirs(bam_workspace)
+
 #Either get cmd line args, or estimate read len and insert size
 if cmd_args.isParams is not None:
     max_read_len,mean_is,sd_is,usd_is = parse_is_param()
@@ -423,10 +428,10 @@ if cmd_args.isParams is not None:
     if get_max_rl(PATH_DICT["config"]) is None:
         with open(PATH_DICT["config"], "a", encoding="utf-8") as config_file:
             config_file.write(f"read_len {max_read_len}")
-    if missing_file(path_dict["stats"]):
+    if executor.should_execute("is_params",[path_dict["stats"]]):
         with open(path_dict["stats"], "w", encoding="utf-8") as stat_file:
             stat_file.write(f"max_is {max_is}\n")
-elif missing_file(path_dict["stats"]):
+elif executor.should_execute("is_params",[path_dict["stats"]]):
     try:
         max_read_len, max_is = \
             max_is_calc.get_max_is_from_fq_2(cmd_args.workdir, cmd_args.fq1, \
@@ -451,68 +456,16 @@ isolate_cmd = ( f"{BIN_DICT['isolate_relevant_pairs_fq']}"
                 f" {cmd_args.host_reference}"
                 f" {cmd_args.virus_reference} {cmd_args.workdir}"
                 f" {bam_workspace}" )
-if ( missing_file(path_dict["rfq1"]) or missing_file(path_dict["rfq2"]) ):
+if executor.should_execute("isolation",[path_dict["rfq1"],path_dict["rfq2"] ]):
     execute(isolate_cmd)
+
+# === STEP primary_aln
 
 #Check if IS sizes have been defined by the user
 IS_OPT=""
 if cmd_args.isParams is not None:
     _, mean_is, sd_is, _ = parse_is_param()
     IS_OPT = f"-I {mean_is},{sd_is}"
-
-#Define function to map clips
-def map_clips(prefix, reference):
-    "Maps clips with a given prefix to the given reference"
-    l_path_dict = { ext : prefix + "." + ext for ext in \
-        ( "sai", "full.bam", "aln.bam", "unmapped.fa", "mem.bam", "bam", "cs.bam" )
-    }
-
-    bwa_aln_cmd = ( f"{cmd_args.bwa} aln -t {cmd_args.threads} -f {l_path_dict['sai']}"
-                    f" {reference} {prefix}.fa" )
-    bwa_samse_cmd = (   f"{cmd_args.bwa} samse -n {MAX_XA}"
-                        f" {reference} {l_path_dict['sai']} {prefix}.fa |"
-                        f" {cmd_args.samtools} view -b -F 2304 >"
-                        f" {l_path_dict['full.bam']}" )
-    if missing_file(l_path_dict["sai"]):
-        execute(bwa_aln_cmd)
-    if missing_file(l_path_dict["full.bam"]):
-        execute(bwa_samse_cmd)
-
-    filter_unmapped_cmd = ( f"{cmd_args.samtools} view -b -F 4"
-                            f" {l_path_dict['full.bam']} > {l_path_dict['aln.bam']}" )
-    if missing_file(l_path_dict["aln.bam"]):
-        execute(filter_unmapped_cmd)
-
-    dump_unmapped_fa = (f"{cmd_args.samtools} fasta -f 4"
-                        f" {l_path_dict['full.bam']} > {l_path_dict['unmapped.fa']}" )
-    if missing_file(l_path_dict["unmapped.fa"]):
-        execute(dump_unmapped_fa)
-
-    bwa_mem_cmd = ( f"{cmd_args.bwa} mem -t {cmd_args.threads}"
-                    f" -h {MAX_XA} -Y"
-                    f" -K {BATCH_SIZE} {IS_OPT} {reference}"
-                    f" {l_path_dict['unmapped.fa']} |"
-                    f" {cmd_args.samtools} view -b -F 2308 >"
-                    f" {l_path_dict['mem.bam']}" )
-
-    if missing_file(l_path_dict["mem.bam"]):
-        execute(bwa_mem_cmd)
-
-    map_clips_filt_expr =""
-    if cmd_args.maxAltAln > 0:
-        map_clips_filt_expr = f"-e '[X2] <= {cmd_args.maxAltAln}'"
-    merge_cmd = (   f"{cmd_args.samtools} cat {l_path_dict['aln.bam']}"
-                    f" {l_path_dict['mem.bam']} |"
-                    f" {BIN_DICT['addX2tag']} - - |"
-                    f" {cmd_args.samtools} view -b {map_clips_filt_expr}"
-                    f" -o {l_path_dict['bam']}"
-                )
-    if missing_file(l_path_dict["bam"]):
-        execute(merge_cmd)
-
-    if missing_file(l_path_dict["cs.bam"]):
-        pysam.sort("-@", str(cmd_args.threads), "-o",   f"{l_path_dict['cs.bam']}",
-                                                        f"{l_path_dict['bam']}")
 
 #All the files which we will be working with
 path_dict = { nm : os.path.join(bam_workspace,path) for nm,path in {
@@ -546,44 +499,99 @@ def joint_mapping(outbam):
         merge_cmd = f"{cmd_args.samtools} merge -n {outbam} {mapdir}/host.bam {mapdir}/virus.bam"
         execute(merge_cmd)
 
-
 #Map the reads to the joint reference
-if missing_file(path_dict["rawBam"]):
+if executor.should_execute("primary_aln",[path_dict["rawBam"]]):
     joint_mapping(path_dict["rawBam"])
+
+
+# === STEP clean_sort
 filt_expr = ""
 if cmd_args.maxAltAln > 0:
     filt_expr = f"-e '[X2] <= {cmd_args.maxAltAln} && [Y2] <= {cmd_args.maxAltAln}'"
 cleanbam_cmd = (f" {BIN_DICT['cleanbam']} {cmd_args.virus_reference} {path_dict['rawBam']} - |"
                 f" {cmd_args.samtools} view -b {filt_expr} "
                 f" -o {path_dict['nsrtBam']}" )
-if missing_file(path_dict["nsrtBam"]):
-    execute(cleanbam_cmd)
-
-#Position sort
 samtools_sort_cmd = (   f"{cmd_args.samtools} sort -@ {cmd_args.threads}"
                         f" -o {path_dict['psrtBam']} {path_dict['nsrtBam']}" )
-if missing_file(path_dict["psrtBam"]):
+if executor.should_execute("clean_sort",(path_dict["nsrtBam"])):
+    execute(cleanbam_cmd)
     execute(samtools_sort_cmd)
+
+# === STEP extract_clips
+
 #Pull clips out
 extract_clips_cmd = (   f"{BIN_DICT['extract_clips']}"
                         f" {cmd_args.virus_reference}"
                         f" {cmd_args.workdir} {bam_workspace}" )
-if any(missing_file(path_dict[x]) for x in ("vAnchor", "hAnchor", "vFasta", "hFasta")):
+if executor.should_execute("extract_clips",("vAnchor", "hAnchor", "vFasta", "hFasta")):
     execute(extract_clips_cmd)
+
+# === STEP clip_aln
+
+#Define function to map clips
+def map_clips(prefix, reference):
+    "Maps clips with a given prefix to the given reference"
+    l_path_dict = { ext : prefix + "." + ext for ext in \
+        ( "sai", "full.bam", "aln.bam", "unmapped.fa", "mem.bam", "bam", "cs.bam" )
+    }
+
+    bwa_aln_cmd = ( f"{cmd_args.bwa} aln -t {cmd_args.threads} -f {l_path_dict['sai']}"
+                    f" {reference} {prefix}.fa" )
+    bwa_samse_cmd = (   f"{cmd_args.bwa} samse -n {MAX_XA}"
+                        f" {reference} {l_path_dict['sai']} {prefix}.fa |"
+                        f" {cmd_args.samtools} view -b -F 2304 >|"
+                        f" {l_path_dict['full.bam']}" )
+    execute(bwa_aln_cmd)
+    execute(bwa_samse_cmd)
+
+    filter_unmapped_cmd = ( f"{cmd_args.samtools} view -b -F 4"
+                            f" {l_path_dict['full.bam']} >| {l_path_dict['aln.bam']}" )
+    execute(filter_unmapped_cmd)
+
+    dump_unmapped_fa = (f"{cmd_args.samtools} fasta -f 4"
+                        f" {l_path_dict['full.bam']} >| {l_path_dict['unmapped.fa']}" )
+    execute(dump_unmapped_fa)
+
+    bwa_mem_cmd = ( f"{cmd_args.bwa} mem -t {cmd_args.threads}"
+                    f" -h {MAX_XA} -Y"
+                    f" -K {BATCH_SIZE} {IS_OPT} {reference}"
+                    f" {l_path_dict['unmapped.fa']} |"
+                    f" {cmd_args.samtools} view -b -F 2308 >|"
+                    f" {l_path_dict['mem.bam']}" )
+
+    execute(bwa_mem_cmd)
+
+    map_clips_filt_expr =""
+    if cmd_args.maxAltAln > 0:
+        map_clips_filt_expr = f"-e '[X2] <= {cmd_args.maxAltAln}'"
+    merge_cmd = (   f"{cmd_args.samtools} cat {l_path_dict['aln.bam']}"
+                    f" {l_path_dict['mem.bam']} |"
+                    f" {BIN_DICT['addX2tag']} - - |"
+                    f" {cmd_args.samtools} view -b {map_clips_filt_expr}"
+                    f" -o {l_path_dict['bam']}"
+                )
+    execute(merge_cmd)
+
+    pysam.sort("-@", str(cmd_args.threads), "-o",   f"{l_path_dict['cs.bam']}",
+                                                    f"{l_path_dict['bam']}")
+
 # map virus clips
-if missing_file(path_dict["vClip"]):
+if executor.should_execute("clip_aln",(path_dict["vClip"], path_dict["hClip"])):
     map_clips(f"{bam_workspace}/virus-clips", cmd_args.host_reference)
-# map host clips
-if missing_file(path_dict["hClip"]):
     map_clips(f"{bam_workspace}/host-clips", cmd_args.virus_reference)
+
+# === STEP collect_aln
+
 # collect all alignments
 collect_alignments_cmd = (  f"{cmd_args.samtools} merge -u -"
                             f" {PATH_DICT['fqSrtBam']}"
                             f" {path_dict['vClip']} {path_dict['hClip']} | "
                             f" {cmd_args.samtools} sort -@ {cmd_args.threads} -n - >|"
                             f" {PATH_DICT['allNSBam']}" )
-if missing_file(PATH_DICT["allNSBam"]):
+if executor.should_execute("collect_aln",[PATH_DICT["allNSBam"]]):
     execute(collect_alignments_cmd)
+
+# === STEP enum_chimera
 
 #Extract candidate host and viral positions
 extract_regions_cmd = ( f"{BIN_DICT['enumerate_chimeric_fragments']}"
@@ -594,48 +602,70 @@ extract_regions_cmd = ( f"{BIN_DICT['enumerate_chimeric_fragments']}"
                         f" --parallel={cmd_args.threads} |"
                         f" {UTIL_DICT['compCand']} -v outDir={cmd_args.workdir}"
                         f" > {PATH_DICT['juncCand']}" )
-if missing_file(PATH_DICT["juncCand"]):
+if executor.should_execute("enum_chimera",
+        (PATH_DICT[x] for x in ("juncCand", "fragGrp", "fragIdx"))):
     execute(extract_regions_cmd)
     if cmd_args.excluded_regions_bed is not None:
         filter_bedpe(PATH_DICT['juncCand'])
 
+# === STEP enum_edge
+
 #Combine candidate junctions into candidate regions with edges between them
 enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges']}"
                     f" {cmd_args.workdir} {bam_workspace}" )
-if any(missing_file(PATH_DICT[x]) for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc")):
+if executor.should_execute("enum_edges",
+        (PATH_DICT[x] for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc"))):
     execute(enum_edges_cmd)
+
+# === STEP edge_mapping
 
 #Make the readsx dir
 readsx = cmd_args.workdir + "/readsx"
-if not os.path.exists(readsx):
+if not os.path.isdir(readsx):
     os.makedirs(readsx)
+
 ##Edgemapper Command
 edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
                     f" {cmd_args.host_reference} {cmd_args.virus_reference}"
                     f" {cmd_args.workdir} {bam_workspace}" )
-if any(missing_file(PATH_DICT[nm]) for nm in ( "rawRes", "hSeq", "vSeq" )):
+if executor.should_execute("edge_mapping",
+        (PATH_DICT[nm] for nm in ( "rawRes", "hSeq", "vSeq" )) ):
     execute(edge_mapper_cmd)
+
+# === STEP collect_reads
+
 merge_readsx_cmd = ( f"{cmd_args.samtools} merge -r --write-index"
                      f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
-if missing_file(PATH_DICT["allReadsx"]):
+if executor.should_execute("collect_reads",(PATH_DICT["allReadsx"])):
     execute(merge_readsx_cmd,mustPass=False)
+
+# === STEP dust_filter
+
 ##Dust Filter the breakpoint sequences
 for side in ("host", "virus"):
     tgtFile = f"{cmd_args.workdir}/{side}_bp_seqs.masked.bed"
     dust_cmd = f"touch {tgtFile}"
     if cmd_args.dust != 'none':
         dust_cmd = f"{cmd_args.dust} {cmd_args.workdir}/{side}_bp_seqs.fa > {tgtFile}"
-    if missing_file(tgtFile):
+    if executor.should_execute("dust_filter",[tgtFile]):
         execute(dust_cmd)
-####Retreive the breakpoint region coverage
+
+
+# === STEP make_bed
+
 #Pull out a bed formated version of the called breakpoints, separately for host and virus
 split_cmd = (   f"{UTIL_DICT['splitCBed']} -v outdir={cmd_args.workdir}"
                 f" {PATH_DICT['rawRes']}" )
-if any(missing_file(PATH_DICT[nm]) for nm in ( "hBed", "vBed" )):
+if executor.should_execute("make_bed",
+        (PATH_DICT[nm] for nm in ( "hBed", "vBed" ))):
     execute(split_cmd)
+        #If there are no LCRs found by dust the file won't be made
     for nm in ( "hBed", "vBed" ):
-        if missing_file(PATH_DICT[nm]): #If there are no LCRs found by dust the file won't be made
+        if missing_file(PATH_DICT[nm]):
             execute(f"touch {PATH_DICT[nm]}")
+
+# === STEP adj_coverage
+
 max_is = get_max_is(PATH_DICT["fqStats"])
 calc_coverage_cmd = (   f"{UTIL_DICT['adjCov']} {cmd_args.bedtools}"
                         f" {cmd_args.samtools} {cmd_args.threads}"
@@ -645,28 +675,28 @@ calc_coverage_cmd = (   f"{UTIL_DICT['adjCov']} {cmd_args.bedtools}"
                         f" {PATH_DICT['vNames']} {PATH_DICT['rawRes']} >"
                         f" {PATH_DICT['adjRes']}"
                     )
-
-if missing_file(PATH_DICT['adjRes']):
+if executor.should_execute("adj_coverage", (PATH_DICT['adjRes']) ):
     execute(calc_coverage_cmd)
-#Filter and make results human readable
-filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} >"
-                f" {PATH_DICT['frawRes']}" )
 
-if missing_file(PATH_DICT['frawRes']):
+# === STEP filter
+
+if executor.should_execute("filter",
+        (PATH_DICT[nm] for nm in (  "frawRes", "filtRes", 
+                                    "discard", "alternate" ) ) ):
+    filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} >"
+                    f" {PATH_DICT['frawRes']}" )
     execute(filter_cmd)
-filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} --remapped >"
-                f" {PATH_DICT['filtRes']}" )
-if missing_file(PATH_DICT['filtRes']):
+    filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} --remapped >"
+                    f" {PATH_DICT['filtRes']}" )
     execute(filter_cmd)
-filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected >"
-                f" {PATH_DICT['discard']}" )
-if missing_file(PATH_DICT['discard']):
+    filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected >"
+                    f" {PATH_DICT['discard']}" )
     execute(filter_cmd)
-filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected --print-alternates >"
-                f" {PATH_DICT['alternate']}" )
-if missing_file(PATH_DICT['alternate']):
+    filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected"
+                    f" --print-alternates > {PATH_DICT['alternate']}" )
     execute(filter_cmd)
 
+# === STEP cleanup
 
 if not cmd_args.keep:
     eprint("Cleaning up intermediary files ...")
