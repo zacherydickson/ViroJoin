@@ -60,13 +60,13 @@ class ExecutionController:
                 "collect_reads", "dust_filter", "adj_coverage", "filter"
             ]
     def __init__(self, force_from=None):
-        if force_from is not None and force_from not in self.STEPS:
+        if force_from is not None and force_from.lower() not in self.STEPS:
             raise ValueError(
-                f"Unknown step '{force_from}'. "
+                f"Unknown force_from argument '{force_from}'. "
                 f"Valid steps: {', '.join(self.STEPS)}"
             )
 
-        self.force_from = force_from
+        self.force_from = force_from.lower()
         self.force = False
 
     def should_execute(self, step, targets):
@@ -342,7 +342,11 @@ if (cmd_args.maxUsedFrac < 0 or cmd_args.maxUsedFrac > 1):
     eprint("[ERROR] maxUsedFrac must be between 0 and 1, inclusive")
     sys.exit(1)
 
-executor = ExecutionController(cmd_args.force_from)
+try:
+    executor = ExecutionController(cmd_args.force_from)
+except ValueError as ex:
+        eprint(f"[ERROR] {ex}")
+        sys.exit(1)
 
 #Remove workdir if requested
 if cmd_args.clean_first:
