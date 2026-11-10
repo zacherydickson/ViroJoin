@@ -52,6 +52,7 @@ def eprint(*args, **kwargs):
     "Prints messages to stderr"
     print(*args, file=sys.stderr, **kwargs)
 
+
 cmd_parser = argparse.ArgumentParser(description=   'ViroJoin, a virus'
                                                     ' integration caller.',
                                      prog="ViroJoin",
@@ -175,12 +176,9 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
     }.items()
 }
 
-CLEANUP_PATH_LIST = [ PATH_DICT[key] for key in [
-        "adjRes", "ctgLen", "ctgMap", "edgeCand", "discard", "feAssoc",
-        "frawRes", "hBed", "jBed", "juncCand", "regCand", "rrAssoc", "rawRes",
-        "vBed","vNames",
-        #defunct
-        "readSeq", "regSeq"
+
+CLEANUP_PATH_LIST = [ PATH_DICT[key] for key in PATH_DICT if key not in [
+        "allReadsx", "alternate", "config", "discard", "filtRes"
     ]
 ]
 CLEANUP_PATH_LIST += [ os.path.join(cmd_args.workdir,path) for path in [
@@ -330,6 +328,7 @@ if missing_file(PATH_DICT["config"]):
         config_file.write(f"max_used_frac {cmd_args.maxUsedFrac}\n")
         config_file.write(f"max_raw_alt_dist {cmd_args.maxRawAltDist}\n")
         config_file.write(f"max_prop_alt_dist {cmd_args.maxPropAltDist}\n")
+#TODO: Check requested config from CLI, against saved config if resuming
 # Generate general distribution of insert sizes
 if missing_file(PATH_DICT["ctgMap"]):
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:

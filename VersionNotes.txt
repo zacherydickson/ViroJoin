@@ -119,3 +119,5 @@ Version 2.7.0
          The former considers the distance as a proportion of the virus/chromosome on which the junction appears, default to 0.001
          The latter uses absolute distance, default -1
          If both are specified both must pass
+Version 2.7.0+force_from
+	Added --force-from option which allows rerunning ViroJoin from a particular phase regardless of what work was previously done
