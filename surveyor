@@ -505,6 +505,7 @@ if executor.should_execute("primary_aln",[path_dict["rawBam"]]):
 
 
 # === STEP clean_sort
+
 filt_expr = ""
 if cmd_args.maxAltAln > 0:
     filt_expr = f"-e '[X2] <= {cmd_args.maxAltAln} && [Y2] <= {cmd_args.maxAltAln}'"
@@ -513,7 +514,8 @@ cleanbam_cmd = (f" {BIN_DICT['cleanbam']} {cmd_args.virus_reference} {path_dict[
                 f" -o {path_dict['nsrtBam']}" )
 samtools_sort_cmd = (   f"{cmd_args.samtools} sort -@ {cmd_args.threads}"
                         f" -o {path_dict['psrtBam']} {path_dict['nsrtBam']}" )
-if executor.should_execute("clean_sort",(path_dict["nsrtBam"])):
+if executor.should_execute("clean_sort",
+        [path_dict["nsrtBam"], path_dict["psrtBam"]] ):
     execute(cleanbam_cmd)
     execute(samtools_sort_cmd)
 
@@ -523,7 +525,8 @@ if executor.should_execute("clean_sort",(path_dict["nsrtBam"])):
 extract_clips_cmd = (   f"{BIN_DICT['extract_clips']}"
                         f" {cmd_args.virus_reference}"
                         f" {cmd_args.workdir} {bam_workspace}" )
-if executor.should_execute("extract_clips",("vAnchor", "hAnchor", "vFasta", "hFasta")):
+if executor.should_execute("extract_clips",
+        [path_dict[x] for x in ("vAnchor", "hAnchor", "vFasta", "hFasta")] ):
     execute(extract_clips_cmd)
 
 # === STEP clip_aln
@@ -576,7 +579,7 @@ def map_clips(prefix, reference):
                                                     f"{l_path_dict['bam']}")
 
 # map virus clips
-if executor.should_execute("clip_aln",(path_dict["vClip"], path_dict["hClip"])):
+if executor.should_execute("clip_aln",[path_dict["vClip"], path_dict["hClip"]]):
     map_clips(f"{bam_workspace}/virus-clips", cmd_args.host_reference)
     map_clips(f"{bam_workspace}/host-clips", cmd_args.virus_reference)
 
@@ -603,7 +606,7 @@ extract_regions_cmd = ( f"{BIN_DICT['enumerate_chimeric_fragments']}"
                         f" {UTIL_DICT['compCand']} -v outDir={cmd_args.workdir}"
                         f" > {PATH_DICT['juncCand']}" )
 if executor.should_execute("enum_chimera",
-        (PATH_DICT[x] for x in ("juncCand", "fragGrp", "fragIdx"))):
+        [PATH_DICT[x] for x in ("juncCand", "fragGrp", "fragIdx")] ):
     execute(extract_regions_cmd)
     if cmd_args.excluded_regions_bed is not None:
         filter_bedpe(PATH_DICT['juncCand'])
@@ -613,8 +616,8 @@ if executor.should_execute("enum_chimera",
 #Combine candidate junctions into candidate regions with edges between them
 enum_edges_cmd = (  f"{BIN_DICT['enumerate_edges']}"
                     f" {cmd_args.workdir} {bam_workspace}" )
-if executor.should_execute("enum_edges",
-        (PATH_DICT[x] for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc"))):
+if executor.should_execute("enum_edge",
+        [PATH_DICT[x] for x in ("regCand", "edgeCand", "feAssoc", "rrAssoc")] ):
     execute(enum_edges_cmd)
 
 # === STEP edge_mapping
@@ -629,14 +632,14 @@ edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
                     f" {cmd_args.host_reference} {cmd_args.virus_reference}"
                     f" {cmd_args.workdir} {bam_workspace}" )
 if executor.should_execute("edge_mapping",
-        (PATH_DICT[nm] for nm in ( "rawRes", "hSeq", "vSeq" )) ):
+        [PATH_DICT[nm] for nm in ( "rawRes", "hSeq", "vSeq" )] ):
     execute(edge_mapper_cmd)
 
 # === STEP collect_reads
 
 merge_readsx_cmd = ( f"{cmd_args.samtools} merge -r --write-index"
                      f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
-if executor.should_execute("collect_reads",(PATH_DICT["allReadsx"])):
+if executor.should_execute("collect_reads",[PATH_DICT["allReadsx"]]):
     execute(merge_readsx_cmd,mustPass=False)
 
 # === STEP dust_filter
@@ -657,7 +660,7 @@ for side in ("host", "virus"):
 split_cmd = (   f"{UTIL_DICT['splitCBed']} -v outdir={cmd_args.workdir}"
                 f" {PATH_DICT['rawRes']}" )
 if executor.should_execute("make_bed",
-        (PATH_DICT[nm] for nm in ( "hBed", "vBed" ))):
+        [PATH_DICT[nm] for nm in ( "hBed", "vBed" )] ):
     execute(split_cmd)
         #If there are no LCRs found by dust the file won't be made
     for nm in ( "hBed", "vBed" ):
@@ -675,14 +678,14 @@ calc_coverage_cmd = (   f"{UTIL_DICT['adjCov']} {cmd_args.bedtools}"
                         f" {PATH_DICT['vNames']} {PATH_DICT['rawRes']} >"
                         f" {PATH_DICT['adjRes']}"
                     )
-if executor.should_execute("adj_coverage", (PATH_DICT['adjRes']) ):
+if executor.should_execute("adj_coverage", [PATH_DICT['adjRes']] ):
     execute(calc_coverage_cmd)
 
 # === STEP filter
 
 if executor.should_execute("filter",
-        (PATH_DICT[nm] for nm in (  "frawRes", "filtRes", 
-                                    "discard", "alternate" ) ) ):
+        [PATH_DICT[nm] for nm in (  "frawRes", "filtRes", 
+                                    "discard", "alternate" ) ] ):
     filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} >"
                     f" {PATH_DICT['frawRes']}" )
     execute(filter_cmd)
