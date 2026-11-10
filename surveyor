@@ -52,6 +52,34 @@ def eprint(*args, **kwargs):
     "Prints messages to stderr"
     print(*args, file=sys.stderr, **kwargs)
 
+class ExecutionController:
+    "Small Handler for determining if a pipeline step must be run"
+    STEPS = [   "init" , "config", "contig_mapping", "is_params",
+                "isolation", "primary_aln", "clean_sort", "clip_aln",
+                "collect_aln", "enum_chimera", "enum_edge", "edge_mapping",
+                "collect_reads", "dust_filter", "adj_coverage", "filter"
+            ]
+    def __init__(self, force_from=None):
+        if force_from is not None and force_from not in self.STEPS:
+            raise ValueError(
+                f"Unknown step '{force_from}'. "
+                f"Valid steps: {', '.join(self.STEPS)}"
+            )
+
+        self.force_from = force_from
+        self.force = False
+
+    def should_execute(self, step, targets):
+        if step not in self.STEPS:
+            raise ValueError(f"Unknown pipeline step: {step}")
+
+        if step == self.force_from:
+            self.force = True
+
+        return self.force or not all(
+            os.path.isfile(target) for target in targets
+        )
+
 
 cmd_parser = argparse.ArgumentParser(description=   'ViroJoin, a virus'
                                                     ' integration caller.',
