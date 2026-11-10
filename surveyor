@@ -127,7 +127,7 @@ cmd_parser.add_argument('--maxRawAltDist', type=int, default=-1,
                                 ' marked as an alternate mapping of the other;'
                                 ' negative values disable the filter; Works as'
                                 ' an AND filter with maxPropAltDistance.' )
-cmd_parser.add_argument('--maxPropAltDist', type=float, default=0.01,
+cmd_parser.add_argument('--maxPropAltDist', type=float, default=0.001,
                         help=   'If two junctions have a breakpoint on the same'
                                 ' contig and strand within this proportion of'
                                 ' the contig\'s length, the lower scoring'

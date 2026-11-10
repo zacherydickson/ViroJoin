@@ -41,7 +41,7 @@ config_t parse_config(std::string file) {
         {"min_frag", &config.min_frag},
         {"split_bonus", &config.split_bonus},
         {"read_len", &config.read_len},
-        {"max_raw_alt_dist", &config.max_raw_alt_dist},
+        {"max_raw_alt_dist", &config.max_raw_alt_dist}
     };
     for(const auto & pair : integerParams) {
         auto it = config_params.find(pair.first);
