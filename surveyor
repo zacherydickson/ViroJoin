@@ -149,6 +149,7 @@ PATH_DICT = { nm : os.path.join(cmd_args.workdir,path) for nm,path in {
         "ctgMap"    : "contig_map",
         "edgeCand"  : "edge-candidates.tab",
         "discard"   : "results.discarded.txt",
+        "alternate" : "results.alternate.txt",
         "filtRes"   : "results.remapped.t1.txt",
         "feAssoc"   : "fragment-edge-associations.tab",
         "fqBam"     : os.path.join("bam_0","retained-pairs.namesorted.bam"),
@@ -612,6 +613,11 @@ filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected >"
                 f" {PATH_DICT['discard']}" )
 if missing_file(PATH_DICT['discard']):
     execute(filter_cmd)
+filter_cmd = ( f"{BIN_DICT['filter']} {cmd_args.workdir} --print-rejected --print-alternates >"
+                f" {PATH_DICT['alternate']}" )
+if missing_file(PATH_DICT['alternate']):
+    execute(filter_cmd)
+
 
 if not cmd_args.keep:
     eprint("Cleaning up intermediary files ...")
