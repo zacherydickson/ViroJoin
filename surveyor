@@ -361,6 +361,7 @@ if cmd_args.clean_first:
 if not os.path.exists(cmd_args.workdir):
     os.makedirs(cmd_args.workdir)
 # Create config file in workdir
+# === STEP config
 if executor.should_execute("config",[PATH_DICT["config"]]):
     with open(PATH_DICT["config"], "w", encoding ="utf-8") as config_file:
         config_file.write(f"threads {cmd_args.threads}\n")
@@ -375,8 +376,13 @@ if executor.should_execute("config",[PATH_DICT["config"]]):
         config_file.write(f"max_raw_alt_dist {cmd_args.maxRawAltDist}\n")
         config_file.write(f"max_prop_alt_dist {cmd_args.maxPropAltDist}\n")
 #TODO: Check requested config from CLI, against saved config if resuming
-# Generate general distribution of insert sizes
-if missing_file(PATH_DICT["ctgMap"]):
+
+
+# === STEP contig_mapping
+
+if executor.should_execute("contig_mapping",
+        [ PATH_DICT[nm] for nm in ("ctgMap", "vNames", "ctgLen") ] ):
+    # Generate general distribution of insert sizes
     with open(PATH_DICT["ctgMap"], "w", encoding= "utf-8") as contig_map:
         i = 1
         for reference_fa_file in [cmd_args.host_reference, cmd_args.virus_reference]:
@@ -384,16 +390,14 @@ if missing_file(PATH_DICT["ctgMap"]):
             for k in list(reference_fa.keys()):
                 contig_map.write(f"{k} {i}\n")
                 i += 1
-# count viruses
-with pyfaidx.Fasta(cmd_args.virus_reference) as reference_fa:
-    n_viruses = len(list(reference_fa.keys()))
-    #Store the virusIDs
-    if missing_file(PATH_DICT["vNames"]):
+    # count viruses
+    with pyfaidx.Fasta(cmd_args.virus_reference) as reference_fa:
+        n_viruses = len(list(reference_fa.keys()))
+        #Store the virusIDs
         with open(PATH_DICT["vNames"],"w",encoding="utf-8") as virus_names:
             for key in reference_fa.keys():
                 virus_names.write(f"{key}\n")
-#Store the lengths of all contigs
-if missing_file(PATH_DICT["ctgLen"]):
+    #Store the lengths of all contigs
     with open(PATH_DICT["ctgLen"],"w",encoding="utf-8") as contig_lengths:
         for reference_fa_file in [cmd_args.host_reference, cmd_args.virus_reference]:
             with pyfaidx.Fasta(reference_fa_file) as reference_fa:
