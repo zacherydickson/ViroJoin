@@ -10,7 +10,19 @@
 #include <ssw_cpp.h>
 #include "utils.h"
 
-void print_calls(std::vector<call_t>& calls) {
+// DECLARATIONS
+
+using CallVector_t = std::vector<call_t>;
+
+// GLOBAL VARIABLES
+
+static double MaxAltPropDistance = 0.001;
+static int MaxAltRawDistance = -1;
+std::string ContigLengthsFileName;
+
+// FUNCTIONS
+
+void print_calls(CallVector_t & calls) {
     for (size_t i = 0; i < calls.size(); i++) {
         call_t call = calls[i];
         if (!call.removed) {
@@ -33,20 +45,116 @@ StripedSmithWaterman::Alignment align(StripedSmithWaterman::Aligner& aligner, st
     return aln;
 }
 
+
+//Function to identify 'accepted' calls which are likely to be alternate mapping of other calls
+//  This is done with the assumption that a particular genomic location is likely to to have only
+//  one junction with a given configuration, so additional junctions in the same vicinity may be
+//  alternate mappings with other reads
+//Inputs - a vector of calls to filter, and a vector of calls wihin which to store identified junctions
+//       - Also uses global MaxAltPropDistance and MaxAltDistance
+//Output - None, modifies the inputs
+void IdentifyAlternates(CallVector_t & accepted_calls,
+                        CallVector_t & alternate_calls)
+{
+    bool rawFilter = (MaxAltRawDistance >= 0);
+    bool propFilter = (MaxAltPropDistance >= 0);
+    //The Filter is disabled if maxAlts are both negative
+    if(!rawFilter && !propFilter) { return; }
+    //Need the contig lengths in order to calculate proportions
+    std::unordered_map<std::string,size_t> contigLengthMap;
+    if(propFilter) {
+        std::ifstream in(ContigLengthsFileName);
+        std::string contigName;
+        size_t length;
+        while(in >> contigName >> length) {
+            contigLengthMap[contigName] = length;
+        }
+    }
+    //The First call is always accepted, so we start at the second call
+    for(size_t i = 1; i < accepted_calls.size(); i++) {
+        call_t & call_i = accepted_calls[i];
+        if(call_i.removed) { continue; }
+        //Iterate over all prior (non-alt) calls
+        for(size_t j = 0; j < i; j++) {
+            call_t & call_j = accepted_calls[j];
+            //Skip removed prior calls
+            // NOTE: As we use this to remove alts, this can lead to
+            // A is alt of B, and C is alt of A, but C is not an alt of B, so C is allowed through
+            if(call_j.removed) { continue; }
+            //Determine the raw and proportional distance(s) between
+            // bp positions on the same contig strand
+            std::vector<double> rawDists, propDists;
+            rawDists.reserve(2);
+            if (propFilter) {propDists.reserve(2); }
+            using BPPair_t = std::pair<breakpoint_t,breakpoint_t>;
+            for(const BPPair_t & bpPair :
+                    {   BPPair_t{call_i.host_bp,call_j.host_bp},
+                        BPPair_t{call_i.virus_bp,call_j.virus_bp} } )
+            {
+                if( (bpPair.first.chr != bpPair.second.chr) ||
+                    (bpPair.first.rev != bpPair.second.rev) )
+                { continue; }
+                double dist = std::abs(bpPair.first.start - bpPair.second.start);
+                // no need to save the distance if we aren't raw filtering
+                if( rawFilter) { rawDists.push_back(dist); }
+                if ( !propFilter) { continue; }
+                double propDist = dist / contigLengthMap.at(bpPair.first.chr);
+                propDists.push_back(propDist);
+            }
+            //Process both the raw and proportional distances
+            // Note: An empty vector is the result of either the filter being disabled
+            //  or the calls being incomparable
+            //Both filters must say filter for the junction to be filtered
+            bool bFilter = false;
+            for(std::vector<double> * dists_ptr : {&rawDists,&propDists}) {
+                //If the vector is empty, skip that filter
+                if(!dists_ptr->size()) { continue; }
+                bFilter = true;
+                //Get the minimum distance
+                std::sort(dists_ptr->begin(),dists_ptr->end());
+                double dist = dists_ptr->front();
+                //Determine which threshold is being used
+                double thresh = (dists_ptr == &rawDists) ?  MaxAltRawDistance :
+                                                            MaxAltPropDistance;
+                if(dist > thresh) {
+                    bFilter = false;
+                    break;
+                }
+            }
+            //Move along if filtering isn't requested
+            if( !bFilter ) { continue; }
+            //Filter Call_J
+            //Copy Call_I as an alt of call_J, then mark the original removed
+            alternate_calls.push_back(call_i);
+            alternate_calls.back().paired_with = call_j.id;
+            call_i.removed = true;
+            //An alt was found for i, so we don't need to consider any additional j's
+            break;
+        }
+    }
+}
+
+
+
+
 int main(int argc, char* argv[]) {
 
     std::string workdir = argv[1];
 
+    ContigLengthsFileName = workdir + "/contig_lengths.tab";
     config_t config = parse_config(workdir + "/config.txt");
     double min_pairs = config.min_frag;
     double split_bonus = config.split_bonus;
     double min_seq_len = double(config.read_len)/2.0;
 
     std::vector<std::string> args;
-    bool print_rejected = false, accept_clipped = false, remapped = false;
+    bool    print_rejected = false, accept_clipped = false,
+            remapped = false, print_alternates = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--print-rejected") == 0) {
             print_rejected = true;
+        } else if (strcmp(argv[i], "--print-alternates") == 0) {
+            print_alternates = true;
         } else if (strcmp(argv[i], "--accept-all-clipped") == 0) {
             accept_clipped = true;
         } else if (strcmp(argv[i], "--remapped") == 0) {
@@ -94,7 +202,7 @@ int main(int argc, char* argv[]) {
         host_virus_bp_Ns[callid].second = end-start+1;
     }
 
-    std::vector<call_t> accepted_calls, rejected_calls;
+    CallVector_t accepted_calls, rejected_calls, alternate_calls;
     std::string line;
     while (std::getline(fin, line)) {
         call_t call(line);
@@ -204,9 +312,19 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // No additional work if printing rejected
 
     if (print_rejected) {
         print_calls(rejected_calls);
+        return 0;
+    }
+
+    // find alternates
+
+    IdentifyAlternates(accepted_calls,alternate_calls);
+
+    if (print_alternates) {
+        print_calls(alternate_calls);
     } else {
         print_calls(accepted_calls);
     }
