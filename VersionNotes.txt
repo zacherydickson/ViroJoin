@@ -111,7 +111,7 @@ Version V2.6.1
 	Output Junction IDs now match internal edge Ids for traceability
 Version 2.6.2
 	Bug Fix - fixed fatal filtering error due to shift to edge-ids as final junction call ids
-Version 2.6.2+AltFilter
+Version 2.7.0
 	Added an additional filter after edge mapping which identifies junctions which are alt-mappings of other junctions
         These are identified as junctions which are at the same location (strand, contig, and position) as another junction
         Filter is controlled with the new --MaxPropAltDist and --MaxRawAltDist options
