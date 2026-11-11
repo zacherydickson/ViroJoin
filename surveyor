@@ -58,28 +58,27 @@ class ExecutionController:
                 "isolation", "primary_aln", "clean_sort", "extract_clips",
                 "clip_aln", "collect_aln", "enum_chimera", "enum_edge",
                 "edge_mapping", "collect_reads", "dust_filter",
-                "make_bed", "adj_coverage", "filter"
+                "make_bed", "adj_coverage", "filter", "terminate"
             ]
     def __init__(self, force_from=None):
-        if force_from is not None:
-            force_from = force_from.lower()
-        if force_from is not None and force_from not in self.STEPS:
+        if force_from is None:
+            force_from = "terminate"
+        force_from = force_from.lower()
+        if force_from not in self.STEPS:
             raise ValueError(
                 f"Unknown force_from argument '{force_from}'. "
                 f"Valid steps: {', '.join(self.STEPS)}"
             )
 
         self.force_from = force_from
-        self.force_index = None
-        if force_from is not None:
-            self.force_index = self.STEPS.index(self.force_from)
+        self.force_index = self.STEPS.index(self.force_from)
         self.force = False
 
     def should_execute(self, step, targets=None):
         if step not in self.STEPS:
             raise ValueError(f"Unknown pipeline step: {step}")
         step_index = self.STEPS.index(step)
-        forced = self.force_index is not None and step_index >= self.force_index
+        forced = step_index >= self.force_index
         if forced:
             self.force = True
         if targets is not None and not isinstance(targets, (list, tuple, set)):
@@ -402,7 +401,9 @@ def check_config():
             argVal = None
             match tag:
                 case "threads":
-                    pass
+                    argVal = cmd_args.threads
+                    value = int(value)
+                    req_force_from = "terminate"
                 case "read_len":
                     pass
                 case "min_sc_size":
@@ -450,8 +451,7 @@ def check_config():
             if(argVal is not None and argVal != value):
                 needs_update = True
                 req_force_index = ExecutionController.STEPS.index(req_force_from)
-                if(executor.force_index is None or
-                        executor.force_index > req_force_index):
+                if(executor.force_index > req_force_index):
                     raise ValueError( f"Saved config {tag} value {value} does"
                                       f" not match command line argument"
                                       f" {argVal}; update the config file, use"
