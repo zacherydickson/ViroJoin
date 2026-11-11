@@ -82,7 +82,8 @@ class ExecutionController:
         forced = self.force_index is not None and step_index >= self.force_index
         if forced:
             self.force = True
-
+        if targets is not None and not isinstance(targets, (list, tuple, set)):
+            targets = [ targets ]
         return self.force or (targets is not None and not all(
             os.path.isfile(target) for target in targets
         ))
@@ -305,6 +306,8 @@ def get_max_is(file):
 
 def get_max_rl(file):
     "parses a config file and returns the max Read length value"
+    if missing_file(file):
+        return None
     with open(file, encoding ="utf-8") as config:
         for line in config:
             tag,value = line.strip().split()
@@ -363,7 +366,11 @@ if not os.path.isdir(cmd_args.workdir):
     os.makedirs(cmd_args.workdir)
 # Create config file in workdir
 # === STEP config
-if executor.should_execute("config",[PATH_DICT["config"]]):
+
+def write_config():
+    "output configuration to file"
+    #carry forward the read_length if
+    read_len = get_max_rl(PATH_DICT["config"])
     with open(PATH_DICT["config"], "w", encoding ="utf-8") as config_file:
         config_file.write(f"threads {cmd_args.threads}\n")
         config_file.write(f"min_sc_size {cmd_args.minClipSize}\n")
@@ -376,8 +383,92 @@ if executor.should_execute("config",[PATH_DICT["config"]]):
         config_file.write(f"max_used_frac {cmd_args.maxUsedFrac}\n")
         config_file.write(f"max_raw_alt_dist {cmd_args.maxRawAltDist}\n")
         config_file.write(f"max_prop_alt_dist {cmd_args.maxPropAltDist}\n")
-#TODO: Check requested config from CLI, against saved config if resuming
+        if read_len is not None:
+            config_file.write(f"read_len {read_len}\n")
 
+#Returns true if the config file needs to updates
+#Return false if it does not,
+#Throws value error if the current settings would result in
+# an unexpected update
+def check_config():
+    "Compare the current setting to the saved settings"
+    if missing_file(PATH_DICT["config"]):
+        return True
+    needs_update = False
+    with open(PATH_DICT["config"], encoding ="utf-8") as config:
+        for line in config:
+            tag,value = line.strip().split()
+            req_force_from = None
+            argVal = None
+            match tag:
+                case "threads":
+                    pass
+                case "read_len":
+                    pass
+                case "min_sc_size":
+                    argVal = cmd_args.minClipSize
+                    value = int(value)
+                    req_force_from = "extract_clips"
+                case "max_sc_dist":
+                    argVal = cmd_args.maxSCDist
+                    value = int(value)
+                    req_force_from = "edge_mapping"
+                case "max_alt_aln":
+                    argVal = cmd_args.maxAltAln
+                    value = int(value)
+                    req_force_from = "clean_sort"
+                case "explore":
+                    argVal = cmd_args.exploratory
+                    value = eval(value)
+                    req_force_from = "edge_mapping"
+                case "clique":
+                    argVal = cmd_args.cliqueClusters
+                    value = eval(value)
+                    req_force_from = "enum_edge"
+                case "min_frag":
+                    argVal = cmd_args.minFrag
+                    value = int(value)
+                    req_force_from = "enum_edge"
+                case "split_bonus":
+                    argVal = cmd_args.splitBonus
+                    value = int(value)
+                    req_force_from = "enum_edge"
+                case "max_used_frac":
+                    argVal = cmd_args.maxUsedFrac
+                    value = float(value)
+                    req_force_from = "edge_mapping"
+                case "max_raw_alt_dist":
+                    argVal = cmd_args.maxRawAltDist
+                    value = int(value)
+                    req_force_from = "filter"
+                case "max_prop_alt_dist":
+                    argVal = cmd_args.maxPropAltDist
+                    value = float(value)
+                    req_force_from = "filter"
+                case _:
+                    raise ValueError(f"Unrecognized tag {tag} in saved config")
+            if(argVal is not None and argVal != value):
+                needs_update = True
+                req_force_index = ExecutionController.STEPS.index(req_force_from)
+                if(executor.force_index is None or
+                        executor.force_index > req_force_index):
+                    raise ValueError( f"Saved config {tag} value {value} does"
+                                      f" not match command line argument"
+                                      f" {argVal}; update the config file, use"
+                                      f" force_from {req_force_from}, use"
+                                      f" --clean_first, or specify a new"
+                                      f" workdir" )
+    return needs_update
+
+if executor.should_execute("config",[PATH_DICT["config"]]):
+    write_config()
+else:
+    try:
+        if check_config():
+            write_config()
+    except ValueError as ex:
+        eprint(f"[ERROR] Config Mismatch: {ex}")
+        sys.exit(1)
 
 # === STEP contig_mapping
 
@@ -496,7 +587,7 @@ def joint_mapping(outbam):
                         f" {cmd_args.samtools} fixmate -m - {mapdir}/{key}.bam"
                         )
             execute(map_cmd)
-        merge_cmd = f"{cmd_args.samtools} merge -n {outbam} {mapdir}/host.bam {mapdir}/virus.bam"
+        merge_cmd = f"{cmd_args.samtools} merge -f -n {outbam} {mapdir}/host.bam {mapdir}/virus.bam"
         execute(merge_cmd)
 
 #Map the reads to the joint reference
@@ -637,7 +728,7 @@ if executor.should_execute("edge_mapping",
 
 # === STEP collect_reads
 
-merge_readsx_cmd = ( f"{cmd_args.samtools} merge -r --write-index"
+merge_readsx_cmd = ( f"{cmd_args.samtools} merge -fr --write-index"
                      f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
 if executor.should_execute("collect_reads",[PATH_DICT["allReadsx"]]):
     execute(merge_readsx_cmd,mustPass=False)
@@ -684,7 +775,7 @@ if executor.should_execute("adj_coverage", [PATH_DICT['adjRes']] ):
 # === STEP filter
 
 if executor.should_execute("filter",
-        [PATH_DICT[nm] for nm in (  "frawRes", "filtRes", 
+        [PATH_DICT[nm] for nm in (  "frawRes", "filtRes",
                                     "discard", "alternate" ) ] ):
     filter_cmd = (  f"{BIN_DICT['filter']} {cmd_args.workdir} >"
                     f" {PATH_DICT['frawRes']}" )
