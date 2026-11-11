@@ -455,7 +455,7 @@ def check_config():
                     raise ValueError( f"Saved config {tag} value {value} does"
                                       f" not match command line argument"
                                       f" {argVal}; update the config file, use"
-                                      f" force_from {req_force_from}, use"
+                                      f" --force_from {req_force_from}, use"
                                       f" --clean_first, or specify a new"
                                       f" workdir" )
     return needs_update
