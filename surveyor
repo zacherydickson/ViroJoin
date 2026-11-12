@@ -713,17 +713,17 @@ if executor.should_execute("enum_edge",
 
 # === STEP edge_mapping
 
-#Make the readsx dir
-readsx = cmd_args.workdir + "/readsx"
-if not os.path.isdir(readsx):
-    os.makedirs(readsx)
-
 ##Edgemapper Command
-edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
-                    f" {cmd_args.host_reference} {cmd_args.virus_reference}"
-                    f" {cmd_args.workdir} {bam_workspace}" )
 if executor.should_execute("edge_mapping",
         [PATH_DICT[nm] for nm in ( "rawRes", "hSeq", "vSeq" )] ):
+    #Clean and make the readsx dir
+    readsx = cmd_args.workdir + "/readsx"
+    shutil.rmtree(readsx,ignore_errors=True)
+    os.makedirs(readsx)
+    #run edge_mapper
+    edge_mapper_cmd = ( f"{BIN_DICT['edge_mapper']} "
+                        f" {cmd_args.host_reference} {cmd_args.virus_reference}"
+                        f" {cmd_args.workdir} {bam_workspace}" )
     execute(edge_mapper_cmd)
 
 # === STEP collect_reads

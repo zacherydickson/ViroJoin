@@ -122,3 +122,5 @@ Version 2.7.0
 Version 2.8.0
 	Added --force-from option which allows rerunning ViroJoin from a particular phase regardless of what work was previously done
         Additionally added checks for mismatched configuration when resuming
+Version 2.8.1
+	Bug Fix - intermediate readsx dir is now wiped prior to running the edge_mapping step
