@@ -714,10 +714,10 @@ if executor.should_execute("enum_edge",
 # === STEP edge_mapping
 
 ##Edgemapper Command
+readsx = cmd_args.workdir + "/readsx"
 if executor.should_execute("edge_mapping",
         [PATH_DICT[nm] for nm in ( "rawRes", "hSeq", "vSeq" )] ):
     #Clean and make the readsx dir
-    readsx = cmd_args.workdir + "/readsx"
     shutil.rmtree(readsx,ignore_errors=True)
     os.makedirs(readsx)
     #run edge_mapper
@@ -728,9 +728,9 @@ if executor.should_execute("edge_mapping",
 
 # === STEP collect_reads
 
-merge_readsx_cmd = ( f"{cmd_args.samtools} merge -fr --write-index"
-                     f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
 if executor.should_execute("collect_reads",[PATH_DICT["allReadsx"]]):
+    merge_readsx_cmd = ( f"{cmd_args.samtools} merge -fr --write-index"
+                         f" {PATH_DICT['allReadsx']} {readsx}/*.bam" )
     execute(merge_readsx_cmd,mustPass=False)
 
 # === STEP dust_filter

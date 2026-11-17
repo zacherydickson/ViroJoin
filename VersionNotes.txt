@@ -124,3 +124,5 @@ Version 2.8.0
         Additionally added checks for mismatched configuration when resuming
 Version 2.8.1
 	Bug Fix - intermediate readsx dir is now wiped prior to running the edge_mapping step
+Version 2.8.2
+	Bug Fix - Failure to construct merge command if edge_mapping not run - introduced in 2.8.1
